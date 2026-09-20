@@ -149,6 +149,44 @@ BLOCK_DESCRIPTIONS = {
     "Tren Inferior": "Pierna: combina un patrón dominante de rodilla con una bisagra de cadera.",
 }
 
+MOVEMENT_EXPLANATIONS = {
+    "Empuje": (
+        "**Empuje (Push):** ejercicios en los que alejas el peso de tu cuerpo. "
+        "Trabajan principalmente pecho, hombros y tríceps."
+    ),
+    "Tirón": (
+        "**Tirón (Pull):** ejercicios en los que acercas el peso hacia tu cuerpo. "
+        "Trabajan principalmente espalda y bíceps."
+    ),
+}
+
+CARDIO_RECOMMENDATIONS = {
+    "Volumen": {
+        "duration": "15-20 minutos",
+        "title": "Caminata ligera en cinta",
+        "detail": (
+            "Mantén un ritmo cómodo y sostenible. El objetivo es cuidar la salud cardiovascular "
+            "sin añadir una fatiga que interfiera con la ganancia de masa muscular."
+        ),
+    },
+    "Hipertrofia": {
+        "duration": "20-25 minutos",
+        "title": "Caminata moderada en cinta",
+        "detail": (
+            "Usa un ritmo cómodo-moderado que te permita hablar. Complementa el trabajo de fuerza "
+            "sin convertir el cardio en otra sesión exigente."
+        ),
+    },
+    "Definición": {
+        "duration": "30-40 minutos",
+        "title": "Caminata en cinta con inclinación",
+        "detail": (
+            "Utiliza una inclinación y velocidad que puedas sostener sin perder la técnica. "
+            "Aumenta el gasto energético mientras el entrenamiento de fuerza ayuda a proteger el músculo."
+        ),
+    },
+}
+
 # URLs directas de imágenes JPG, fijadas a una revisión inmutable del dataset.
 EXERCISE_IMAGE_REVISION = "a859101d633a01c4a1a920d6a8ce41dabba0705f"
 EXERCISE_IMAGE_BASE = (
@@ -718,6 +756,24 @@ def render_workout_cards(
                     )
 
 
+def render_smart_cardio(goal: str) -> None:
+    """Muestra una propuesta de cinta determinista según el objetivo del perfil."""
+    recommendation = CARDIO_RECOMMENDATIONS.get(goal, CARDIO_RECOMMENDATIONS["Hipertrofia"])
+    st.divider()
+    st.markdown("### 🏃 Cardio Inteligente")
+    st.caption("Propuesta automática de cinta basada en el objetivo guardado en tu Perfil.")
+    with st.container(border=True):
+        duration_column, activity_column = st.columns([0.35, 0.65])
+        duration_column.metric("Duración propuesta", recommendation["duration"])
+        with activity_column:
+            st.markdown(f"#### {recommendation['title']}")
+            st.write(recommendation["detail"])
+        st.caption(
+            "La propuesta es orientativa: reduce la intensidad o detente si aparece dolor, mareo "
+            "o una sensación anormal."
+        )
+
+
 def profile_details() -> None:
     """Formulario y resultados del perfil, aislados del Tutor IA."""
     st.write("Introduce tus datos para obtener una estimación inicial de energía y macros.")
@@ -846,6 +902,7 @@ def render_daily_plan(plan: dict) -> None:
                 f"Puntuación de fatiga: {plan['score']}. Las series base se multiplican por el filtro "
                 "de recuperación y se redondean hacia arriba."
             )
+            render_smart_cardio(plan.get("goal", "Hipertrofia"))
 
     with diet_tab:
         st.subheader("Menú dinámico del día")
@@ -908,6 +965,7 @@ def checkin_page() -> None:
             ["Empuje", "Tirón"],
             help="Empuje agrupa pecho, hombro y tríceps; Tirón agrupa espalda y bíceps.",
         )
+        st.info(MOVEMENT_EXPLANATIONS[upper_selection])
         available_exercises = exercises_for_block(upper_selection, prioritize_guided)
         training_label = f"{division} · {upper_selection}"
     else:
