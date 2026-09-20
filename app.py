@@ -1300,11 +1300,34 @@ def apply_premium_styles() -> None:
         }
 
         .stApp {
-            background:
-                radial-gradient(circle at 92% 5%, rgba(217, 255, 50, 0.10), transparent 24rem),
-                radial-gradient(circle at 5% 75%, rgba(255, 122, 24, 0.08), transparent 28rem),
-                linear-gradient(145deg, #080b0d 0%, #0d1114 55%, #080a0c 100%);
+            background-color: #07090b;
+            background-image:
+                radial-gradient(circle at 92% 5%, rgba(217, 255, 50, 0.12), transparent 26rem),
+                radial-gradient(circle at 5% 78%, rgba(255, 122, 24, 0.10), transparent 30rem),
+                linear-gradient(135deg, rgba(4, 7, 9, 0.91), rgba(6, 9, 11, 0.84) 48%, rgba(3, 5, 7, 0.94)),
+                url("https://images.unsplash.com/photo-1778828450059-f39d5bbb01af?auto=format&fit=crop&w=2400&q=85");
+            background-size: auto, auto, cover, cover;
+            background-position: center, center, center, center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
             color: var(--gym-text);
+            min-height: 100vh;
+        }
+
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"] {
+            background: transparent !important;
+        }
+
+        [data-testid="stMainBlockContainer"] {
+            background: rgba(7, 10, 12, 0.82);
+            border: 1px solid rgba(217, 255, 50, 0.14);
+            border-radius: 24px;
+            box-shadow: 0 26px 70px rgba(0, 0, 0, 0.48);
+            backdrop-filter: blur(12px) saturate(1.08);
+            -webkit-backdrop-filter: blur(12px) saturate(1.08);
+            margin-top: 1rem;
+            margin-bottom: 2rem;
         }
 
         .stApp p,
@@ -1321,13 +1344,16 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stHeader"] {
-            background: rgba(8, 11, 13, 0.78);
-            backdrop-filter: blur(12px);
+            background: rgba(6, 9, 11, 0.88);
+            border-bottom: 1px solid rgba(217, 255, 50, 0.10);
+            backdrop-filter: blur(16px);
         }
 
         [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0d1114 0%, #090c0e 100%);
-            border-right: 1px solid rgba(217, 255, 50, 0.25);
+            background: linear-gradient(180deg, rgba(13, 17, 20, 0.98), rgba(7, 10, 12, 0.98));
+            border-right: 1px solid rgba(217, 255, 50, 0.38);
+            box-shadow: 18px 0 45px rgba(0, 0, 0, 0.38);
+            backdrop-filter: blur(18px);
         }
 
         [data-testid="stSidebar"] p,
@@ -1337,12 +1363,82 @@ def apply_premium_styles() -> None:
             font-weight: 650;
         }
 
+        /* Navegación lateral táctil: tarjetas grandes, foco inequívoco y zoom fluido. */
+        [data-testid="stSidebar"] [data-testid="stRadio"] > div {
+            gap: 0.7rem;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label {
+            min-height: 3.2rem;
+            padding: 0.72rem 0.9rem;
+            background: #151c21;
+            border: 1px solid #52616a;
+            border-radius: 14px;
+            box-shadow: 0 7px 18px rgba(0, 0, 0, 0.24);
+            transform-origin: left center;
+            cursor: pointer;
+            transition: transform 190ms cubic-bezier(.2,.8,.2,1), border-color 190ms ease,
+                        background-color 190ms ease, box-shadow 190ms ease, filter 190ms ease;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+            transform: translateX(6px) translateY(-2px) scale(1.035);
+            background: #202a30;
+            border-color: var(--gym-lime);
+            box-shadow: 0 13px 28px rgba(0, 0, 0, 0.38), 0 0 20px rgba(217, 255, 50, 0.12);
+            filter: brightness(1.08);
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:active {
+            transform: translateX(3px) scale(0.99);
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {
+            background: linear-gradient(120deg, var(--gym-lime), var(--gym-green));
+            border-color: #efffb3;
+            box-shadow: 0 10px 26px rgba(55, 242, 155, 0.22);
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) p,
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) span {
+            color: #07100b !important;
+            font-weight: 850 !important;
+        }
+
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:focus-within {
+            outline: 3px solid #4aa8ff;
+            outline-offset: 3px;
+        }
+
         [data-testid="stCaptionContainer"] p {
             color: #e0e0e0 !important;
         }
 
         [data-testid="stAlert"] p {
             color: #f4f7f8 !important;
+        }
+
+        /* Contraste global: los textos informativos siempre son legibles sobre la fotografía. */
+        .stApp h1,
+        .stApp h2,
+        .stApp h3,
+        .stApp h4,
+        .stApp h5,
+        .stApp h6,
+        [data-testid="stWidgetLabel"],
+        [data-testid="stExpander"] summary,
+        [data-testid="stChatMessage"] {
+            color: #ffffff !important;
+        }
+
+        .stApp a {
+            color: var(--gym-lime) !important;
+            text-decoration-color: rgba(217, 255, 50, 0.55);
+        }
+
+        .stApp a:hover {
+            color: #ffffff !important;
+            text-decoration-color: #ffffff;
         }
 
         h1, h2, h3 {
@@ -1464,10 +1560,11 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stVerticalBlockBorderWrapper"] {
-            background: linear-gradient(145deg, rgba(23, 29, 33, 0.96), rgba(13, 17, 20, 0.96));
-            border: 1px solid rgba(217, 255, 50, 0.32) !important;
+            background: linear-gradient(145deg, rgba(25, 32, 37, 0.98), rgba(12, 17, 20, 0.98));
+            border: 1px solid rgba(217, 255, 50, 0.42) !important;
+            border-left: 3px solid var(--gym-lime) !important;
             border-radius: 18px !important;
-            box-shadow: 0 14px 36px rgba(0, 0, 0, 0.30);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.035);
             transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease, filter 220ms ease;
             will-change: transform;
         }
@@ -1479,11 +1576,45 @@ def apply_premium_styles() -> None:
             filter: brightness(1.045);
         }
 
+        [data-testid="stVerticalBlockBorderWrapper"]:active {
+            transform: translateY(-1px) scale(0.995);
+        }
+
+        [data-testid="stExpander"] {
+            background: #141b1f;
+            border: 1px solid #596970 !important;
+            border-radius: 14px !important;
+            overflow: hidden;
+            transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+        }
+
+        [data-testid="stExpander"]:hover {
+            transform: translateY(-2px);
+            border-color: var(--gym-lime) !important;
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+        }
+
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] summary p,
+        [data-testid="stExpander"] summary svg {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+            font-weight: 750;
+        }
+
         [data-testid="stMetric"] {
-            background: rgba(255, 255, 255, 0.035);
-            border: 1px solid rgba(55, 242, 155, 0.22);
+            background: #151c20;
+            border: 1px solid rgba(55, 242, 155, 0.34);
             border-radius: 14px;
             padding: 0.85rem 1rem;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+            transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+        }
+
+        [data-testid="stMetric"]:hover {
+            transform: translateY(-2px);
+            border-color: var(--gym-green);
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
         }
 
         [data-testid="stMetricValue"] {
@@ -1604,9 +1735,37 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stChatMessage"] {
-            background: rgba(17, 22, 26, 0.88);
-            border: 1px solid rgba(55, 242, 155, 0.18);
+            background: #11171b;
+            border: 1px solid rgba(55, 242, 155, 0.34);
             border-radius: 16px;
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+        }
+
+        [data-testid="stRadio"] label p,
+        [data-testid="stSlider"] p,
+        [data-testid="stCheckbox"] label p,
+        [data-testid="stToggle"] label p {
+            color: #ffffff !important;
+        }
+
+        [data-testid="stSlider"] [role="slider"] {
+            background: var(--gym-lime) !important;
+            border: 2px solid #ffffff !important;
+            box-shadow: 0 0 0 4px rgba(217, 255, 50, 0.16);
+        }
+
+        [data-testid="stSlider"] [data-baseweb="slider"] > div > div {
+            background-color: #56636a;
+        }
+
+        button[aria-label],
+        [role="button"] {
+            transition: transform 170ms ease, filter 170ms ease, box-shadow 170ms ease;
+        }
+
+        button[aria-label]:hover,
+        [role="button"]:hover {
+            filter: brightness(1.12);
         }
 
         [data-testid="stImage"] img {
@@ -1647,9 +1806,26 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stDataFrame"] {
-            border: 1px solid rgba(217, 255, 50, 0.16);
+            background: #10161a;
+            border: 1px solid rgba(217, 255, 50, 0.32);
             border-radius: 12px;
             overflow: hidden;
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+        }
+
+        table,
+        th,
+        td {
+            color: #ffffff !important;
+            border-color: #435159 !important;
+        }
+
+        th {
+            background: #1a2328 !important;
+        }
+
+        td {
+            background: #11181c !important;
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -1662,6 +1838,20 @@ def apply_premium_styles() -> None:
         }
 
         @media (max-width: 700px) {
+            .stApp {
+                background-attachment: scroll;
+                background-position: 58% center;
+            }
+            [data-testid="stMainBlockContainer"] {
+                border-radius: 16px;
+                margin-top: 0.45rem;
+                margin-bottom: 1rem;
+                backdrop-filter: blur(8px);
+                -webkit-backdrop-filter: blur(8px);
+            }
+            [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+                transform: translateX(3px) translateY(-1px) scale(1.015);
+            }
             .stTabs [data-baseweb="tab"] {
                 padding: 0 0.55rem;
                 font-size: 0.82rem;
@@ -1722,7 +1912,7 @@ def main() -> None:
         page_title="SmartFit AI",
         page_icon="💪",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
     apply_premium_styles()
     require_password()
