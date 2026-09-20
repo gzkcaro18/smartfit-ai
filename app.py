@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 from html import escape
 from io import BytesIO
+from itertools import permutations
 from math import ceil
 from random import choice, shuffle
 import time
@@ -389,7 +390,55 @@ MAIN_RECIPE_CATALOG = {
     ("Atún al natural escurrido", "Patata cocida"): "Ensalada templada de patata y atún",
 }
 
-BREAKFAST_RECIPE_NAME = "Tortitas fit de avena y plátano"
+BREAKFAST_TEMPLATES = {
+    "pancakes": {
+        "recipe": "Tortitas fit de avena y plátano",
+        "foods": {
+            "Avena seca": 40.0,
+            "Huevo entero": 50.0,
+            "Leche semidesnatada": 180.0,
+            "Plátano": 100.0,
+        },
+    },
+    "porridge": {
+        "recipe": "Porridge caliente de manzana y almendras",
+        "foods": {
+            "Avena seca": 55.0,
+            "Leche semidesnatada": 200.0,
+            "Manzana": 150.0,
+            "Almendras": 10.0,
+        },
+    },
+    "toast_eggs": {
+        "recipe": "Tostadas integrales con revuelto de huevo y claras",
+        "foods": {
+            "Pan integral": 60.0,
+            "Huevo entero": 50.0,
+            "Claras de huevo": 100.0,
+        },
+    },
+    "yogurt_oats": {
+        "recipe": "Bol proteico de yogur, avena y fresas",
+        "foods": {
+            "Yogur griego natural 0%": 180.0,
+            "Avena seca": 45.0,
+            "Fresas": 150.0,
+        },
+    },
+    # Alternativas de respaldo para mantener variedad cuando el Tutor excluye alimentos.
+    "potato_scramble": {
+        "recipe": "Revuelto de huevo y claras con patata cocida",
+        "foods": {"Patata cocida": 200.0, "Huevo entero": 50.0, "Claras de huevo": 120.0},
+    },
+    "rice_pudding": {
+        "recipe": "Arroz con leche fit y plátano",
+        "foods": {"Arroz blanco cocido": 150.0, "Leche semidesnatada": 200.0, "Plátano": 80.0},
+    },
+    "rice_cakes_yogurt": {
+        "recipe": "Tortitas de arroz con yogur y manzana",
+        "foods": {"Tortitas de arroz": 30.0, "Yogur griego natural 0%": 150.0, "Manzana": 150.0},
+    },
+}
 
 SNACK_TEMPLATES = {
     "sandwich": {
@@ -397,13 +446,24 @@ SNACK_TEMPLATES = {
         "foods": {"Pan integral": 60.0, "Manzana": 150.0},
     },
     "yogurt": {
-        "recipe": "Bol proteico de yogur, fresas y almendras",
+        "recipe": "Bol proteico de yogur y fresas con tortitas de arroz",
         "foods": {
             "Yogur griego natural 0%": 120.0,
             "Fresas": 150.0,
             "Tortitas de arroz": 25.0,
-            "Almendras": 10.0,
         },
+    },
+    "banana_honey": {
+        "recipe": "Plátano natural con un toque de miel",
+        "foods": {"Plátano": 120.0, "Miel": 15.0},
+    },
+    "oat_cup": {
+        "recipe": "Vaso de avena cremosa con leche",
+        "foods": {"Avena seca": 35.0, "Leche semidesnatada": 180.0},
+    },
+    "nuts": {
+        "recipe": "Puñado medido de almendras tostadas",
+        "foods": {"Almendras": 25.0},
     },
 }
 
@@ -638,6 +698,38 @@ def plan_macros(plan: dict[tuple[str, str, str], float]) -> dict[str, float]:
     return totals
 
 
+def compatible_snack_orders(
+    breakfast_variant: str,
+    meals_per_day: int,
+    excluded: set[str],
+) -> list[tuple[str, ...]]:
+    """Devuelve snacks completos sin repetir carbohidratos principales ni frutas del desayuno."""
+    breakfast_foods = set(BREAKFAST_TEMPLATES[breakfast_variant]["foods"])
+    used_rotating_foods = breakfast_foods.intersection(ROTATING_CARB_AND_FRUIT_FOODS)
+    required_snacks = 2 if meals_per_day == 5 else 1
+    available = [
+        variant
+        for variant, template in SNACK_TEMPLATES.items()
+        if not set(template["foods"]).intersection(excluded)
+        and not set(template["foods"]).intersection(used_rotating_foods)
+    ]
+    orders = []
+    for order in permutations(available, required_snacks):
+        used_foods = set(used_rotating_foods)
+        valid = True
+        for variant in order:
+            snack_foods = set(SNACK_TEMPLATES[variant]["foods"]).intersection(
+                ROTATING_CARB_AND_FRUIT_FOODS
+            )
+            if used_foods.intersection(snack_foods):
+                valid = False
+                break
+            used_foods.update(snack_foods)
+        if valid:
+            orders.append(order)
+    return orders
+
+
 def morning_base_plan(
     meals_per_day: int,
     excluded: set[str],
@@ -645,26 +737,24 @@ def morning_base_plan(
     daily_carbs: float,
     daily_protein: float,
     daily_fat: float,
-    snack_variant: str,
+    breakfast_variant: str,
+    snack_variants: tuple[str, ...],
 ) -> dict[tuple[str, str, str], float]:
     """Crea desayuno y snacks sin repetir carbohidratos ni frutas durante el día."""
-    breakfast_foods = {
-        "Avena seca": 40.0 if high_carb_day else 55.0,
-        "Huevo entero": 50.0,
-        "Leche semidesnatada": 180.0,
-        "Plátano": 100.0,
-    }
-    snack_order = [snack_variant, "yogurt" if snack_variant == "sandwich" else "sandwich"]
+    breakfast_template = BREAKFAST_TEMPLATES[breakfast_variant]
     layouts: dict[str, tuple[str, dict[str, float]]] = {
-        "Desayuno": (BREAKFAST_RECIPE_NAME, breakfast_foods),
+        "Desayuno": (
+            str(breakfast_template["recipe"]),
+            dict(breakfast_template["foods"]),
+        ),
     }
     if meals_per_day == 5:
-        first_template = SNACK_TEMPLATES[snack_order[0]]
-        second_template = SNACK_TEMPLATES[snack_order[1]]
+        first_template = SNACK_TEMPLATES[snack_variants[0]]
+        second_template = SNACK_TEMPLATES[snack_variants[1]]
         layouts["Media Mañana"] = (str(first_template["recipe"]), dict(first_template["foods"]))
         layouts["Merienda"] = (str(second_template["recipe"]), dict(second_template["foods"]))
     else:
-        template = SNACK_TEMPLATES[snack_order[0]]
+        template = SNACK_TEMPLATES[snack_variants[0]]
         layouts["Merienda"] = (str(template["recipe"]), dict(template["foods"]))
 
     scalable_totals = {"protein": 0.0, "carbs": 0.0, "fat": 0.0}
@@ -711,7 +801,8 @@ def build_recipe_candidate(
     dinner_protein: str,
     lunch_carb: str,
     dinner_carb: str,
-    snack_variant: str,
+    breakfast_variant: str,
+    snack_variants: tuple[str, ...],
 ) -> tuple[float, dict[tuple[str, str, str], float]] | None:
     """Cierra los macros del día con dos platos principales de proteína única."""
     carb_protein_ratio = nutrition["carbs_g"] / max(nutrition["protein_g"], 1)
@@ -728,7 +819,8 @@ def build_recipe_candidate(
             nutrition["carbs_g"],
             nutrition["protein_g"],
             nutrition["fat_g"],
-            snack_variant,
+            breakfast_variant,
+            snack_variants,
         )
         add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_protein, protein_grams)
         add_food_portion(plan, "Cena", dinner_recipe, dinner_protein, protein_grams)
@@ -753,7 +845,7 @@ def build_recipe_candidate(
         if "Claras de huevo" not in excluded and remaining_carb_ratio >= egg_white_carb_ratio:
             protein_corrector = "Claras de huevo"
             corrector_meal = "Desayuno"
-            corrector_recipe = BREAKFAST_RECIPE_NAME
+            corrector_recipe = str(BREAKFAST_TEMPLATES[breakfast_variant]["recipe"])
         else:
             protein_corrector = lunch_protein
             corrector_meal = "Comida (Mediodía)"
@@ -786,12 +878,25 @@ def build_recipe_candidate(
         corrector_portion, carb_portion, oil_portion = solution
         add_food_portion(plan, corrector_meal, corrector_recipe, protein_corrector, corrector_portion * 100)
         if very_high_carb_day:
-            snack_recipe = next(
-                recipe
-                for meal, recipe, _ in plan
-                if meal == "Merienda"
+            honey_destination = next(
+                (
+                    (meal, recipe)
+                    for meal, recipe, food in plan
+                    if food == "Miel"
+                ),
+                next(
+                    (meal, recipe)
+                    for meal, recipe, _ in plan
+                    if meal == "Merienda"
+                ),
             )
-            add_food_portion(plan, "Merienda", snack_recipe, "Miel", carb_portion * 100)
+            add_food_portion(
+                plan,
+                honey_destination[0],
+                honey_destination[1],
+                "Miel",
+                carb_portion * 100,
+            )
         else:
             add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_carb, carb_portion * 50)
             add_food_portion(plan, "Cena", dinner_recipe, dinner_carb, carb_portion * 50)
@@ -840,10 +945,17 @@ def validate_carb_rotation(plan: dict[tuple[str, str, str], float]) -> None:
 
 def plan_rotation_signature(
     plan: dict[tuple[str, str, str], float],
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Resume las fuentes que deben cambiar entre días consecutivos."""
     main_meals = ("Comida (Mediodía)", "Cena")
     snack_meals = ("Media Mañana", "Merienda")
+    breakfasts = tuple(
+        dict.fromkeys(
+            recipe
+            for meal, recipe, _ in plan
+            if meal == "Desayuno"
+        )
+    )
     proteins = tuple(
         next(
             food
@@ -869,20 +981,22 @@ def plan_rotation_signature(
         for meal in snack_meals
         if any(current_meal == meal for current_meal, _, _ in plan)
     )
-    return proteins, carbs, snacks
+    return breakfasts, proteins, carbs, snacks
 
 
 def signatures_rotate(
-    current: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
-    previous: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+    current: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+    previous: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]],
 ) -> bool:
-    """Exige que cada plato principal y la secuencia de snacks roten al día siguiente."""
-    current_proteins, current_carbs, current_snacks = current
-    previous_proteins, previous_carbs, previous_snacks = previous
+    """Exige que desayuno, platos principales y snacks roten al día siguiente."""
+    current_breakfast, current_proteins, current_carbs, current_snacks = current
+    previous_breakfast, previous_proteins, previous_carbs, previous_snacks = previous
     return (
-        all(current != old for current, old in zip(current_proteins, previous_proteins))
+        current_breakfast != previous_breakfast
+        and all(current != old for current, old in zip(current_proteins, previous_proteins))
         and all(current != old for current, old in zip(current_carbs, previous_carbs))
-        and current_snacks != previous_snacks
+        and len(current_snacks) == len(previous_snacks)
+        and all(current != old for current, old in zip(current_snacks, previous_snacks))
     )
 
 
@@ -890,9 +1004,11 @@ def build_dynamic_menu(
     nutrition: dict[str, float],
     excluded: set[str] | None = None,
     meals_per_day: int = 4,
-    preferred_snack_variant: str | None = None,
-    previous_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None,
-    forbidden_signatures: set[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] | None = None,
+    preferred_breakfast_variant: str | None = None,
+    previous_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None,
+    forbidden_signatures: set[
+        tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+    ] | None = None,
 ) -> list[dict[str, float | str]]:
     """Construye recetas variadas y cierra exactamente los macros del día completo."""
     if meals_per_day not in (4, 5):
@@ -908,31 +1024,48 @@ def build_dynamic_menu(
     candidates: list[tuple[float, dict[tuple[str, str, str], float]]] = []
     protein_pairs = [(first, second) for first in proteins for second in proteins if first != second]
     carb_pairs = [(first, second) for first in carbs for second in carbs if first != second]
-    if preferred_snack_variant is not None and preferred_snack_variant not in SNACK_TEMPLATES:
-        raise ValueError("La variante de snack solicitada no existe.")
-    snack_variants = (
-        [preferred_snack_variant]
-        if preferred_snack_variant is not None
-        else list(SNACK_TEMPLATES)
+    if preferred_breakfast_variant is not None and preferred_breakfast_variant not in BREAKFAST_TEMPLATES:
+        raise ValueError("La variante de desayuno solicitada no existe.")
+    available_breakfasts = [
+        variant
+        for variant, template in BREAKFAST_TEMPLATES.items()
+        if not set(template["foods"]).intersection(excluded)
+    ]
+    breakfast_variants = (
+        [preferred_breakfast_variant]
+        if preferred_breakfast_variant in available_breakfasts
+        else available_breakfasts
+        if preferred_breakfast_variant is None
+        else []
     )
+    if not breakfast_variants:
+        raise ValueError("No queda un desayuno completo compatible con las exclusiones actuales.")
     shuffle(protein_pairs)
     shuffle(carb_pairs)
-    shuffle(snack_variants)
-    for snack_variant in snack_variants:
-        for lunch_protein, dinner_protein in protein_pairs:
-            for lunch_carb, dinner_carb in carb_pairs:
-                candidate = build_recipe_candidate(
-                    nutrition,
-                    meals_per_day,
-                    excluded,
-                    lunch_protein,
-                    dinner_protein,
-                    lunch_carb,
-                    dinner_carb,
-                    snack_variant,
-                )
-                if candidate is not None:
-                    candidates.append(candidate)
+    shuffle(breakfast_variants)
+    for breakfast_variant in breakfast_variants:
+        snack_orders = compatible_snack_orders(breakfast_variant, meals_per_day, excluded)
+        shuffle(snack_orders)
+        for snack_variants in snack_orders:
+            for lunch_protein, dinner_protein in protein_pairs:
+                for lunch_carb, dinner_carb in carb_pairs:
+                    candidate = build_recipe_candidate(
+                        nutrition,
+                        meals_per_day,
+                        excluded,
+                        lunch_protein,
+                        dinner_protein,
+                        lunch_carb,
+                        dinner_carb,
+                        breakfast_variant,
+                        snack_variants,
+                    )
+                    if candidate is not None:
+                        try:
+                            validate_carb_rotation(candidate[1])
+                        except ValueError:
+                            continue
+                        candidates.append(candidate)
     if not candidates:
         raise ValueError("Las exclusiones actuales no permiten construir un menú completo con macros positivos.")
 
@@ -961,7 +1094,7 @@ def build_dynamic_menu(
 
 def menu_rows_signature(
     rows: list[dict[str, float | str]],
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Obtiene la firma semanal a partir de las filas visibles del menú."""
     plan = {
         (str(row["Comida"]), str(row["Receta"]), str(row["Alimento"])): float(row["Gramos"])
@@ -978,14 +1111,41 @@ def build_weekly_menu(
     """Genera siete menús exactos, únicos y rotados respecto al día anterior."""
     weekly_menus: dict[str, list[dict[str, float | str]]] = {}
     previous_signature = None
-    used_signatures: set[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = set()
-    snack_variants = tuple(SNACK_TEMPLATES)
+    used_signatures: set[
+        tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+    ] = set()
+    excluded = set(excluded or set())
+    if "Huevo entero" in excluded:
+        excluded.add("Claras de huevo")
+    available_breakfasts = [
+        variant
+        for variant, template in BREAKFAST_TEMPLATES.items()
+        if not set(template["foods"]).intersection(excluded)
+    ]
+    breakfast_variants = []
+    for variant in available_breakfasts:
+        try:
+            build_dynamic_menu(
+                nutrition,
+                excluded,
+                meals_per_day,
+                preferred_breakfast_variant=variant,
+            )
+        except ValueError:
+            continue
+        breakfast_variants.append(variant)
+        if len(breakfast_variants) == 4:
+            break
+    if len(breakfast_variants) < 4:
+        raise ValueError(
+            "Los macros y exclusiones actuales no dejan cuatro desayunos completos distintos para organizar la semana."
+        )
     for index, day in enumerate(WEEKDAYS):
         rows = build_dynamic_menu(
             nutrition,
             excluded,
             meals_per_day,
-            preferred_snack_variant=snack_variants[index % len(snack_variants)],
+            preferred_breakfast_variant=breakfast_variants[index % len(breakfast_variants)],
             previous_signature=previous_signature,
             forbidden_signatures=used_signatures,
         )
@@ -1578,8 +1738,8 @@ def render_weekly_menu(plan: dict) -> None:
     weekly_menus = plan["weekly_menus"]
     st.markdown("### 📅 Planificador semanal completo")
     st.caption(
-        "Cada día conserva exactamente tus macros; proteína, carbohidrato principal y snacks rotan "
-        "para evitar dos jornadas consecutivas iguales."
+        "Cada día conserva exactamente tus macros; desayuno, proteína, carbohidrato principal y cada "
+        "snack rotan para evitar dos jornadas consecutivas iguales."
     )
     day_tabs = st.tabs([f"📆 {day}" for day in WEEKDAYS])
     for tab, day in zip(day_tabs, WEEKDAYS):
