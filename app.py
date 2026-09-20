@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import hmac
+from html import escape
+from io import BytesIO
 from math import ceil
 from random import choice, shuffle
 import time
 
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 
 
@@ -32,6 +40,8 @@ GOAL_EXPLANATIONS = {
     "Hipertrofia": "favorecer la ganancia muscular con un pequeño margen extra de energía.",
     "Definición": "bajar grasa con déficit calórico y proteína alta para proteger la masa muscular.",
 }
+
+WEEKDAYS = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
 
 # Megacatálogo local: nombre, músculo, bloque, series base, equipo guiado e ID visual.
 # Las imágenes pertenecen al dataset público free-exercise-db y se fijan a una revisión concreta.
@@ -345,6 +355,25 @@ FOOD_DATABASE["Arroz blanco cocido"]["category"] = "carb"
 PROTEIN_OPTIONS = [name for name, data in FOOD_DATABASE.items() if data["category"] == "protein"]
 MAIN_CARB_OPTIONS = ["Arroz blanco cocido", "Pasta integral cocida", "Patata cocida"]
 
+SHOPPING_CATEGORIES = {
+    "Proteínas / Carnes y lácteos": {
+        *PROTEIN_OPTIONS,
+        "Huevo entero",
+        "Claras de huevo",
+        "Leche semidesnatada",
+        "Yogur griego natural 0%",
+    },
+    "Carbohidratos / Granos": {
+        *MAIN_CARB_OPTIONS,
+        "Avena seca",
+        "Tortitas de arroz",
+        "Pan integral",
+        "Miel",
+    },
+    "Frutas / Verduras": {"Plátano", "Fresas", "Manzana"},
+    "Grasas / Complementos": {"Aceite de oliva", "Almendras"},
+}
+
 MAIN_RECIPE_CATALOG = {
     ("Pechuga de pollo cocida", "Arroz blanco cocido"): "Arroz con pollo salteado",
     ("Pechuga de pollo cocida", "Pasta integral cocida"): "Pasta integral con pollo mediterráneo",
@@ -649,8 +678,8 @@ def morning_base_plan(
                 destination[nutrient] += grams / 100 * float(FOOD_DATABASE[food][nutrient])
 
     morning_carb_budget = daily_carbs * (0.72 if high_carb_day else 0.55)
-    morning_protein_budget = daily_protein * (0.45 if meals_per_day == 5 else 0.62)
-    morning_fat_budget = daily_fat * (0.55 if meals_per_day == 5 else 0.65)
+    morning_protein_budget = daily_protein * (0.45 if meals_per_day == 5 else 0.38)
+    morning_fat_budget = daily_fat * (0.55 if meals_per_day == 5 else 0.50)
     morning_scale = min(
         1.0,
         max(0.0, morning_carb_budget - fixed_totals["carbs"])
@@ -809,10 +838,61 @@ def validate_carb_rotation(plan: dict[tuple[str, str, str], float]) -> None:
         first_meal_by_food.update({food: meal for food in meal_foods})
 
 
+def plan_rotation_signature(
+    plan: dict[tuple[str, str, str], float],
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Resume las fuentes que deben cambiar entre días consecutivos."""
+    main_meals = ("Comida (Mediodía)", "Cena")
+    snack_meals = ("Media Mañana", "Merienda")
+    proteins = tuple(
+        next(
+            food
+            for current_meal, _, food in plan
+            if current_meal == meal and food in PROTEIN_OPTIONS
+        )
+        for meal in main_meals
+    )
+    carbs = tuple(
+        next(
+            food
+            for current_meal, _, food in plan
+            if current_meal == meal and food in MAIN_CARB_OPTIONS
+        )
+        for meal in main_meals
+    )
+    snacks = tuple(
+        next(
+            recipe
+            for current_meal, recipe, _ in plan
+            if current_meal == meal
+        )
+        for meal in snack_meals
+        if any(current_meal == meal for current_meal, _, _ in plan)
+    )
+    return proteins, carbs, snacks
+
+
+def signatures_rotate(
+    current: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+    previous: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+) -> bool:
+    """Exige que cada plato principal y la secuencia de snacks roten al día siguiente."""
+    current_proteins, current_carbs, current_snacks = current
+    previous_proteins, previous_carbs, previous_snacks = previous
+    return (
+        all(current != old for current, old in zip(current_proteins, previous_proteins))
+        and all(current != old for current, old in zip(current_carbs, previous_carbs))
+        and current_snacks != previous_snacks
+    )
+
+
 def build_dynamic_menu(
     nutrition: dict[str, float],
     excluded: set[str] | None = None,
     meals_per_day: int = 4,
+    preferred_snack_variant: str | None = None,
+    previous_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None,
+    forbidden_signatures: set[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] | None = None,
 ) -> list[dict[str, float | str]]:
     """Construye recetas variadas y cierra exactamente los macros del día completo."""
     if meals_per_day not in (4, 5):
@@ -828,7 +908,13 @@ def build_dynamic_menu(
     candidates: list[tuple[float, dict[tuple[str, str, str], float]]] = []
     protein_pairs = [(first, second) for first in proteins for second in proteins if first != second]
     carb_pairs = [(first, second) for first in carbs for second in carbs if first != second]
-    snack_variants = list(SNACK_TEMPLATES)
+    if preferred_snack_variant is not None and preferred_snack_variant not in SNACK_TEMPLATES:
+        raise ValueError("La variante de snack solicitada no existe.")
+    snack_variants = (
+        [preferred_snack_variant]
+        if preferred_snack_variant is not None
+        else list(SNACK_TEMPLATES)
+    )
     shuffle(protein_pairs)
     shuffle(carb_pairs)
     shuffle(snack_variants)
@@ -850,6 +936,17 @@ def build_dynamic_menu(
     if not candidates:
         raise ValueError("Las exclusiones actuales no permiten construir un menú completo con macros positivos.")
 
+    rotated_candidates = [
+        candidate
+        for candidate in candidates
+        if (previous_signature is None or signatures_rotate(plan_rotation_signature(candidate[1]), previous_signature))
+        and plan_rotation_signature(candidate[1]) not in (forbidden_signatures or set())
+    ]
+    if previous_signature is not None and not rotated_candidates:
+        raise ValueError("No existe una combinación que mantenga los macros y la rotación semanal solicitada.")
+    if rotated_candidates:
+        candidates = rotated_candidates
+
     candidates.sort(key=lambda candidate: candidate[0])
     best_pool = candidates[: min(4, len(candidates))]
     _, selected_plan = choice(best_pool)
@@ -860,6 +957,43 @@ def build_dynamic_menu(
         grams_to_row(meal, recipe, food, grams)
         for (meal, recipe, food), grams in ordered_items
     ]
+
+
+def menu_rows_signature(
+    rows: list[dict[str, float | str]],
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Obtiene la firma semanal a partir de las filas visibles del menú."""
+    plan = {
+        (str(row["Comida"]), str(row["Receta"]), str(row["Alimento"])): float(row["Gramos"])
+        for row in rows
+    }
+    return plan_rotation_signature(plan)
+
+
+def build_weekly_menu(
+    nutrition: dict[str, float],
+    excluded: set[str] | None = None,
+    meals_per_day: int = 4,
+) -> dict[str, list[dict[str, float | str]]]:
+    """Genera siete menús exactos, únicos y rotados respecto al día anterior."""
+    weekly_menus: dict[str, list[dict[str, float | str]]] = {}
+    previous_signature = None
+    used_signatures: set[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = set()
+    snack_variants = tuple(SNACK_TEMPLATES)
+    for index, day in enumerate(WEEKDAYS):
+        rows = build_dynamic_menu(
+            nutrition,
+            excluded,
+            meals_per_day,
+            preferred_snack_variant=snack_variants[index % len(snack_variants)],
+            previous_signature=previous_signature,
+            forbidden_signatures=used_signatures,
+        )
+        signature = menu_rows_signature(rows)
+        weekly_menus[day] = rows
+        used_signatures.add(signature)
+        previous_signature = signature
+    return weekly_menus
 
 
 def fatigue_score(sleep_hours: float, discomfort: str) -> int:
@@ -1214,8 +1348,286 @@ def render_menu_by_meal(menu_rows: list[dict[str, float | str]]) -> None:
                     st.markdown(suggestion)
 
 
+def build_shopping_list(
+    weekly_menus: dict[str, list[dict[str, float | str]]],
+) -> dict[str, list[dict[str, float | str]]]:
+    """Suma los gramos visibles de los siete días y los agrupa para el supermercado."""
+    totals: dict[str, float] = {}
+    for rows in weekly_menus.values():
+        for row in rows:
+            food = str(row["Alimento"])
+            totals[food] = totals.get(food, 0.0) + float(row["Gramos"])
+
+    shopping: dict[str, list[dict[str, float | str]]] = {}
+    assigned_foods: set[str] = set()
+    for category, category_foods in SHOPPING_CATEGORIES.items():
+        items = []
+        for food in sorted(category_foods.intersection(totals)):
+            grams = round(totals[food], 2)
+            items.append(
+                {
+                    "Alimento": food,
+                    "Total exacto (g)": grams,
+                    "Equivalencia": f"{grams / 1000:.2f} kg" if grams >= 1000 else f"{grams:.2f} g",
+                }
+            )
+            assigned_foods.add(food)
+        if items:
+            shopping[category] = items
+
+    remaining = sorted(set(totals).difference(assigned_foods))
+    if remaining:
+        shopping["Otros"] = [
+            {
+                "Alimento": food,
+                "Total exacto (g)": round(totals[food], 2),
+                "Equivalencia": f"{totals[food] / 1000:.2f} kg" if totals[food] >= 1000 else f"{totals[food]:.2f} g",
+            }
+            for food in remaining
+        ]
+    return shopping
+
+
+def weekly_plan_pdf(
+    weekly_menus: dict[str, list[dict[str, float | str]]],
+    shopping_list: dict[str, list[dict[str, float | str]]],
+    nutrition: dict[str, float],
+    goal: str,
+) -> bytes:
+    """Crea un PDF profesional e imprimible sin servicios externos."""
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=14 * mm,
+        leftMargin=14 * mm,
+        topMargin=16 * mm,
+        bottomMargin=15 * mm,
+        title="Plan semanal SmartFit AI",
+        author="SmartFit AI",
+    )
+    stylesheet = getSampleStyleSheet()
+    lime = colors.HexColor("#9BCB20")
+    charcoal = colors.HexColor("#151A1E")
+    slate = colors.HexColor("#E9EDF0")
+    title_style = ParagraphStyle(
+        "SmartFitTitle",
+        parent=stylesheet["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=22,
+        leading=26,
+        textColor=charcoal,
+        alignment=TA_CENTER,
+        spaceAfter=8,
+    )
+    day_style = ParagraphStyle(
+        "SmartFitDay",
+        parent=stylesheet["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=17,
+        leading=21,
+        textColor=charcoal,
+        spaceAfter=7,
+    )
+    meal_style = ParagraphStyle(
+        "SmartFitMeal",
+        parent=stylesheet["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=14,
+        textColor=colors.HexColor("#50630B"),
+        spaceBefore=5,
+        spaceAfter=3,
+    )
+    body_style = ParagraphStyle(
+        "SmartFitBody",
+        parent=stylesheet["BodyText"],
+        fontName="Helvetica",
+        fontSize=8,
+        leading=10,
+        textColor=charcoal,
+    )
+    small_style = ParagraphStyle(
+        "SmartFitSmall",
+        parent=body_style,
+        fontSize=7,
+        leading=9,
+    )
+
+    story = [
+        Paragraph("SMARTFIT AI", title_style),
+        Paragraph("Plan nutricional semanal", day_style),
+        Table(
+            [
+                ["Objetivo", "Calorías/día", "Proteína/día", "Carbohidratos/día", "Grasas/día"],
+                [
+                    escape(goal),
+                    f"{nutrition['calories']} kcal",
+                    f"{nutrition['protein_g']:.1f} g",
+                    f"{nutrition['carbs_g']:.1f} g",
+                    f"{nutrition['fat_g']:.1f} g",
+                ],
+            ],
+            colWidths=[34 * mm, 34 * mm, 34 * mm, 39 * mm, 31 * mm],
+        ),
+        Spacer(1, 5 * mm),
+        Paragraph(
+            "Cantidades calculadas por día. Los valores son orientativos y no sustituyen a un dietista-nutricionista.",
+            body_style,
+        ),
+        PageBreak(),
+    ]
+
+    meal_order = ("Desayuno", "Media Mañana", "Comida (Mediodía)", "Merienda", "Cena")
+    for day_index, day in enumerate(WEEKDAYS):
+        rows = weekly_menus[day]
+        story.append(Paragraph(escape(day), day_style))
+        for meal in meal_order:
+            meal_rows = [row for row in rows if row["Comida"] == meal]
+            if not meal_rows:
+                continue
+            recipes = " + ".join(dict.fromkeys(str(row["Receta"]) for row in meal_rows))
+            story.append(Paragraph(f"{escape(meal)} — {escape(recipes)}", meal_style))
+            table_data = [["Alimento", "g", "P", "C", "G"]]
+            table_data.extend(
+                [
+                    Paragraph(escape(str(row["Alimento"])), small_style),
+                    f"{float(row['Gramos']):.2f}",
+                    f"{float(row['Proteína (g)']):.2f}",
+                    f"{float(row['Carbohidratos (g)']):.2f}",
+                    f"{float(row['Grasas (g)']):.2f}",
+                ]
+                for row in meal_rows
+            )
+            meal_table = Table(
+                table_data,
+                colWidths=[76 * mm, 22 * mm, 22 * mm, 22 * mm, 22 * mm],
+                repeatRows=1,
+            )
+            meal_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), charcoal),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 7),
+                        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#AEB7BD")),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, slate]),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 3),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ]
+                )
+            )
+            story.extend([meal_table, Spacer(1, 2.2 * mm)])
+        if day_index < len(WEEKDAYS) - 1:
+            story.append(PageBreak())
+
+    story.extend([PageBreak(), Paragraph("Lista de la compra semanal", day_style)])
+    for category, items in shopping_list.items():
+        story.append(Paragraph(escape(category), meal_style))
+        category_table = Table(
+            [["Alimento", "Total exacto", "Referencia"]]
+            + [
+                [
+                    Paragraph(escape(str(item["Alimento"])), body_style),
+                    f"{float(item['Total exacto (g)']):.2f} g",
+                    escape(str(item["Equivalencia"])),
+                ]
+                for item in items
+            ],
+            colWidths=[83 * mm, 40 * mm, 41 * mm],
+            repeatRows=1,
+        )
+        category_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), charcoal),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#AEB7BD")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, slate]),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story.extend([category_table, Spacer(1, 4 * mm)])
+
+    def draw_page(canvas, doc) -> None:
+        canvas.saveState()
+        canvas.setStrokeColor(lime)
+        canvas.setLineWidth(1.3)
+        canvas.line(14 * mm, 11 * mm, 196 * mm, 11 * mm)
+        canvas.setFillColor(charcoal)
+        canvas.setFont("Helvetica", 7)
+        canvas.drawString(14 * mm, 7 * mm, "SmartFit AI · Plan semanal")
+        canvas.drawRightString(196 * mm, 7 * mm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    document.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def render_weekly_menu(plan: dict) -> None:
+    """Muestra siete días, la compra consolidada y el PDF descargable."""
+    weekly_menus = plan["weekly_menus"]
+    st.markdown("### 📅 Planificador semanal completo")
+    st.caption(
+        "Cada día conserva exactamente tus macros; proteína, carbohidrato principal y snacks rotan "
+        "para evitar dos jornadas consecutivas iguales."
+    )
+    day_tabs = st.tabs([f"📆 {day}" for day in WEEKDAYS])
+    for tab, day in zip(day_tabs, WEEKDAYS):
+        with tab:
+            rows = weekly_menus[day]
+            st.markdown(f"## {day}")
+            day_protein = sum(float(row["Proteína (g)"]) for row in rows)
+            day_carbs = sum(float(row["Carbohidratos (g)"]) for row in rows)
+            day_fat = sum(float(row["Grasas (g)"]) for row in rows)
+            st.caption(
+                f"Macros del día: P {day_protein:.1f} g · C {day_carbs:.1f} g · G {day_fat:.1f} g"
+            )
+            render_menu_by_meal(rows)
+
+    shopping_list = build_shopping_list(weekly_menus)
+    st.divider()
+    st.markdown("### 🛒 Lista de la compra para 7 días")
+    st.caption("Suma exacta de todos los gramos mostrados en el plan semanal, agrupada por pasillos.")
+    for category, items in shopping_list.items():
+        with st.expander(f"🧺 {category}", expanded=True):
+            st.dataframe(items, width="stretch", hide_index=True)
+
+    pdf_bytes = weekly_plan_pdf(
+        weekly_menus,
+        shopping_list,
+        plan["nutrition"],
+        plan.get("goal", "Objetivo personalizado"),
+    )
+    st.download_button(
+        "📄 Descargar Plan Semanal en PDF",
+        data=pdf_bytes,
+        file_name="SmartFit_AI_Plan_Semanal.pdf",
+        mime="application/pdf",
+        type="primary",
+        width="stretch",
+        key="download_weekly_plan_pdf",
+    )
+
+
 def render_daily_plan(plan: dict) -> None:
     nutrition = plan["nutrition"]
+    if "weekly_menus" not in plan:
+        plan["weekly_menus"] = build_weekly_menu(
+            nutrition,
+            st.session_state.get("excluded_foods", set()),
+            plan.get("meals_per_day", 4),
+        )
+        plan["menu_rows"] = plan["weekly_menus"]["Lunes"]
     st.subheader(plan["status"])
     left, right = st.columns(2)
     left.metric("Volumen recomendado", f"{round(plan['multiplier'] * 100)}% de la sesión base")
@@ -1236,11 +1648,11 @@ def render_daily_plan(plan: dict) -> None:
             render_smart_cardio(plan.get("goal", "Hipertrofia"))
 
     with diet_tab:
-        st.subheader("Menú dinámico del día")
+        st.subheader("Plan nutricional semanal dinámico")
         st.caption(
             f"{plan.get('goal', 'Objetivo')}: "
             f"{GOAL_EXPLANATIONS.get(plan.get('goal', ''), 'macros adaptados a tu perfil.')} "
-            f"El total se reparte en {plan.get('meals_per_day', 4)} comidas sin cambiar tus macros diarios."
+            f"Cada jornada se reparte en {plan.get('meals_per_day', 4)} comidas sin cambiar tus macros diarios."
         )
         p, c, f = st.columns(3)
         p.metric("Proteína", f"{nutrition['protein_g']:.1f} g")
@@ -1251,9 +1663,9 @@ def render_daily_plan(plan: dict) -> None:
                 f"Día de recuperación: carbohidratos reducidos un 25% "
                 f"({nutrition['base_carbs_g']:.1f} g → {nutrition['carbs_g']:.1f} g)."
             )
-        render_menu_by_meal(plan["menu_rows"])
+        render_weekly_menu(plan)
         st.caption(
-            "Cada comida se resuelve matemáticamente y todas las contribuciones suman los macros diarios."
+            "Cada comida se resuelve matemáticamente; cada día completo suma los macros diarios del perfil."
         )
         with st.expander("Base fija de alimentos - macros por 100 g"):
             database_rows = [
@@ -1342,7 +1754,7 @@ def checkin_page() -> None:
         )
         exclusions = st.session_state.get("excluded_foods", set())
         try:
-            menu_rows = build_dynamic_menu(
+            weekly_menus = build_weekly_menu(
                 nutrition,
                 exclusions,
                 profile.get("meals_per_day", 4),
@@ -1352,7 +1764,8 @@ def checkin_page() -> None:
             return
         st.session_state.daily_plan = {
             "nutrition": nutrition,
-            "menu_rows": menu_rows,
+            "menu_rows": weekly_menus["Lunes"],
+            "weekly_menus": weekly_menus,
             "goal": profile["goal"],
             "meals_per_day": profile.get("meals_per_day", 4),
             "score": score,
@@ -1406,12 +1819,13 @@ def tutor_page(embedded: bool = False) -> None:
                 previous_exclusions = set(st.session_state.excluded_foods)
                 st.session_state.excluded_foods.add(food_to_exclude)
                 try:
-                    plan["menu_rows"] = build_dynamic_menu(
+                    plan["weekly_menus"] = build_weekly_menu(
                         plan["nutrition"],
                         st.session_state.excluded_foods,
                         plan.get("meals_per_day", 4),
                     )
-                    answer += " He eliminado el ingrediente y recalculado todas las cantidades con alternativas equivalentes de la base fija."
+                    plan["menu_rows"] = plan["weekly_menus"]["Lunes"]
+                    answer += " He eliminado el ingrediente y recalculado los siete días con alternativas equivalentes de la base fija."
                 except ValueError:
                     st.session_state.excluded_foods = previous_exclusions
                     answer += " No quedan suficientes combinaciones para sustituirlo sin romper los macros; mantengo el menú anterior."
@@ -1432,7 +1846,8 @@ def tutor_page(embedded: bool = False) -> None:
 
     plan = st.session_state.get("daily_plan")
     if plan:
-        st.subheader("Menú del día actualizado")
+        st.subheader("Menú del lunes actualizado")
+        st.caption("El resto de la semana también se ha recalculado y está disponible en el Check-in.")
         render_menu_by_meal(plan["menu_rows"])
     else:
         st.info("Aún no hay un menú activo. Completa el Check-in diario para crear uno.")
@@ -1855,6 +2270,7 @@ def apply_premium_styles() -> None:
         }
 
         .stButton > button,
+        .stDownloadButton > button,
         [data-testid="stFormSubmitButton"] > button {
             border: 1px solid var(--gym-lime);
             border-radius: 12px;
@@ -1869,12 +2285,14 @@ def apply_premium_styles() -> None:
         }
 
         .stButton > button p,
+        .stDownloadButton > button p,
         [data-testid="stFormSubmitButton"] > button p {
             color: #080a0b !important;
             font-weight: 850;
         }
 
         .stButton > button:hover,
+        .stDownloadButton > button:hover,
         [data-testid="stFormSubmitButton"] > button:hover {
             border-color: var(--gym-lime);
             color: #080a0b !important;
@@ -1884,6 +2302,7 @@ def apply_premium_styles() -> None:
         }
 
         .stButton > button:focus-visible,
+        .stDownloadButton > button:focus-visible,
         [data-testid="stFormSubmitButton"] > button:focus-visible,
         .stTabs [data-baseweb="tab"]:focus-visible {
             outline: 3px solid #4aa8ff !important;
