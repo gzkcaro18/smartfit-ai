@@ -1459,7 +1459,7 @@ def apply_premium_styles() -> None:
             background-image:
                 radial-gradient(circle at 92% 5%, rgba(217, 255, 50, 0.12), transparent 26rem),
                 radial-gradient(circle at 5% 78%, rgba(255, 122, 24, 0.10), transparent 30rem),
-                linear-gradient(135deg, rgba(4, 7, 9, 0.91), rgba(6, 9, 11, 0.84) 48%, rgba(3, 5, 7, 0.94)),
+                linear-gradient(135deg, rgba(4, 7, 9, 0.62), rgba(6, 9, 11, 0.50) 48%, rgba(3, 5, 7, 0.66)),
                 url("https://images.unsplash.com/photo-1778828450059-f39d5bbb01af?auto=format&fit=crop&w=2400&q=85");
             background-size: auto, auto, cover, cover;
             background-position: center, center, center, center;
@@ -1475,12 +1475,13 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stMainBlockContainer"] {
-            background: rgba(7, 10, 12, 0.82);
+            background-color: rgba(18, 18, 18, 0.65) !important;
+            background-image: none !important;
             border: 1px solid rgba(217, 255, 50, 0.14);
             border-radius: 24px;
             box-shadow: 0 26px 70px rgba(0, 0, 0, 0.48);
-            backdrop-filter: blur(12px) saturate(1.08);
-            -webkit-backdrop-filter: blur(12px) saturate(1.08);
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
             margin-top: 1rem;
             margin-bottom: 2rem;
         }
@@ -1715,7 +1716,10 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stVerticalBlockBorderWrapper"] {
-            background: linear-gradient(145deg, rgba(25, 32, 37, 0.98), rgba(12, 17, 20, 0.98));
+            background-color: rgba(18, 18, 18, 0.65) !important;
+            background-image: none !important;
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
             border: 1px solid rgba(217, 255, 50, 0.42) !important;
             border-left: 3px solid var(--gym-lime) !important;
             border-radius: 18px !important;
@@ -1736,7 +1740,9 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stExpander"] {
-            background: #141b1f;
+            background-color: rgba(18, 18, 18, 0.65) !important;
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
             border: 1px solid #596970 !important;
             border-radius: 14px !important;
             overflow: hidden;
@@ -1758,7 +1764,9 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stMetric"] {
-            background: #151c20;
+            background-color: rgba(18, 18, 18, 0.65) !important;
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
             border: 1px solid rgba(55, 242, 155, 0.34);
             border-radius: 14px;
             padding: 0.85rem 1rem;
@@ -1784,7 +1792,9 @@ def apply_premium_styles() -> None:
 
         .stTabs [data-baseweb="tab-list"] {
             gap: 0.45rem;
-            background: rgba(255, 255, 255, 0.025);
+            background-color: rgba(18, 18, 18, 0.65) !important;
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 14px;
             padding: 0.35rem;
@@ -1890,7 +1900,9 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stChatMessage"] {
-            background: #11171b;
+            background-color: rgba(18, 18, 18, 0.65) !important;
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
             border: 1px solid rgba(55, 242, 155, 0.34);
             border-radius: 16px;
             box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
@@ -1961,7 +1973,9 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stDataFrame"] {
-            background: #10161a;
+            background-color: rgba(18, 18, 18, 0.65) !important;
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
             border: 1px solid rgba(217, 255, 50, 0.32);
             border-radius: 12px;
             overflow: hidden;
