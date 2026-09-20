@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import hmac
-from itertools import combinations
 from math import ceil
-from random import choice, sample, shuffle
+from random import choice, shuffle
 import time
 
 import streamlit as st
@@ -290,14 +289,40 @@ FOOD_DATABASE = {
         "fdc_id": 4053,
         "category": "fat",
     },
+    "Miel": {
+        "protein": 0.3,
+        "carbs": 82.4,
+        "fat": 0.0,
+        "fdc_id": 169640,
+        "category": "breakfast",
+    },
 }
 
 FOOD_DATABASE["Pechuga de pollo cocida"]["category"] = "protein"
 FOOD_DATABASE["Arroz blanco cocido"]["category"] = "carb"
 PROTEIN_OPTIONS = [name for name, data in FOOD_DATABASE.items() if data["category"] == "protein"]
-CARB_OPTIONS = [name for name, data in FOOD_DATABASE.items() if data["category"] == "carb"]
 MAIN_CARB_OPTIONS = ["Arroz blanco cocido", "Pasta integral cocida", "Patata cocida"]
-BREAKFAST_OPTIONS = ["Avena seca", "Huevo entero", "Claras de huevo", "Plátano", "Leche semidesnatada"]
+
+MAIN_RECIPE_CATALOG = {
+    ("Pechuga de pollo cocida", "Arroz blanco cocido"): "Arroz con pollo salteado",
+    ("Pechuga de pollo cocida", "Pasta integral cocida"): "Pasta integral con pollo mediterráneo",
+    ("Pechuga de pollo cocida", "Patata cocida"): "Pollo especiado con patatas al horno",
+    ("Ternera magra cocida", "Arroz blanco cocido"): "Ternera salteada con arroz",
+    ("Ternera magra cocida", "Pasta integral cocida"): "Pasta boloñesa fit de ternera",
+    ("Ternera magra cocida", "Patata cocida"): "Filete de ternera con patatas al horno",
+    ("Salmón cocido", "Arroz blanco cocido"): "Bowl de salmón con arroz",
+    ("Salmón cocido", "Pasta integral cocida"): "Pasta integral con salmón",
+    ("Salmón cocido", "Patata cocida"): "Salmón al horno con patata",
+    ("Atún al natural escurrido", "Arroz blanco cocido"): "Bowl fresco de arroz con atún",
+    ("Atún al natural escurrido", "Pasta integral cocida"): "Ensalada de pasta integral con atún",
+    ("Atún al natural escurrido", "Patata cocida"): "Ensalada templada de patata y atún",
+}
+
+MORNING_RECIPE_NAMES = {
+    "Desayuno": "Tortitas fit de avena y plátano",
+    "Media Mañana": "Vaso cremoso de avena y plátano",
+    "Merienda": "Batido energético de plátano y avena",
+}
 
 FOOD_ALIASES = {
     "pollo": "Pechuga de pollo cocida",
@@ -312,6 +337,7 @@ FOOD_ALIASES = {
     "patata": "Patata cocida",
     "avena": "Avena seca",
     "aceite": "Aceite de oliva",
+    "miel": "Miel",
     "huevo": "Huevo entero",
     "plátano": "Plátano",
     "platano": "Plátano",
@@ -332,6 +358,7 @@ REPLACEMENTS = {
     "Plátano": "Avena seca",
     "Leche semidesnatada": "Claras de huevo",
     "Nueces": "Aceite de oliva",
+    "Miel": "Plátano",
 }
 
 
@@ -372,16 +399,6 @@ def calculate_nutrition(
     }
 
 
-def choose_food_alternatives(excluded_foods: set[str] | None = None) -> tuple[str, str]:
-    """Elige una proteína y un carbohidrato de las listas fijas para el plan del día."""
-    excluded_foods = excluded_foods or set()
-    proteins = [food for food in PROTEIN_OPTIONS if food not in excluded_foods]
-    carbs = [food for food in CARB_OPTIONS if food not in excluded_foods]
-    if not proteins or not carbs:
-        raise ValueError("No quedan alternativas suficientes en la base fija para calcular el menú.")
-    return choice(proteins), choice(carbs)
-
-
 def detect_food_in_message(message: str) -> str | None:
     """Identifica alimentos por alias; no usa modelos ni servicios externos."""
     text = message.lower()
@@ -418,13 +435,13 @@ def tutor_response(message: str) -> tuple[str, str | None]:
     )
 
 
-def solve_three_foods(foods: tuple[str, str, str], target: dict[str, float]) -> list[float] | None:
-    """Resuelve exactamente un sistema 3x3 de macros; devuelve porciones de 100 g."""
+def solve_macro_vectors(
+    vectors: tuple[dict[str, float], dict[str, float], dict[str, float]],
+    target: dict[str, float],
+) -> list[float] | None:
+    """Resuelve tres correctores nutricionales sin inventar valores de alimentos."""
     nutrients = ("protein", "carbs", "fat")
-    matrix = [
-        [float(FOOD_DATABASE[food][nutrient]) for food in foods] + [target[nutrient]]
-        for nutrient in nutrients
-    ]
+    matrix = [[vector[nutrient] for vector in vectors] + [target[nutrient]] for nutrient in nutrients]
     for column in range(3):
         pivot = max(range(column, 3), key=lambda row: abs(matrix[row][column]))
         if abs(matrix[pivot][column]) < 1e-9:
@@ -436,107 +453,220 @@ def solve_three_foods(foods: tuple[str, str, str], target: dict[str, float]) -> 
             if row == column:
                 continue
             factor = matrix[row][column]
-            matrix[row] = [matrix[row][i] - factor * matrix[column][i] for i in range(4)]
-    solution = [matrix[i][3] for i in range(3)]
+            matrix[row] = [matrix[row][index] - factor * matrix[column][index] for index in range(4)]
+    solution = [matrix[index][3] for index in range(3)]
     return solution if all(value >= -1e-8 for value in solution) else None
 
 
-def macro_target(nutrition: dict[str, float], share: float) -> dict[str, float]:
+def practical_measure(food: str, grams: float) -> str:
+    """Traduce gramos exactos a una referencia fácil de usar en la cocina."""
+    if food == "Huevo entero":
+        units = max(1, round(grams / 50))
+        return f"{units} huevo{'s' if units != 1 else ''} entero{'s' if units != 1 else ''}"
+    if food == "Claras de huevo":
+        return f"{grams:.0f} g de claras pasteurizadas"
+    if food == "Leche semidesnatada":
+        return f"{grams:.0f} ml aproximadamente"
+    if food == "Aceite de oliva":
+        teaspoons = grams / 5
+        return f"{teaspoons:.1f} cucharaditas"
+    if food == "Miel":
+        tablespoons = grams / 15
+        return f"{tablespoons:.1f} cucharadas"
+    if food == "Atún al natural escurrido":
+        return f"1 ración escurrida de {grams:.0f} g"
+    if food in PROTEIN_OPTIONS:
+        return f"1 filete o ración de {grams:.0f} g"
+    return f"{grams:.0f} g pesados"
+
+
+def grams_to_row(meal: str, recipe: str, food: str, grams: float) -> dict[str, float | str]:
+    data = FOOD_DATABASE[food]
+    portion = grams / 100
     return {
-        "protein": nutrition["protein_g"] * share,
-        "carbs": nutrition["carbs_g"] * share,
-        "fat": nutrition["fat_g"] * share,
+        "Comida": meal,
+        "Receta": recipe,
+        "Alimento": food,
+        "Gramos": round(grams, 2),
+        "Medida práctica": practical_measure(food, grams),
+        "Proteína (g)": round(portion * data["protein"], 2),
+        "Carbohidratos (g)": round(portion * data["carbs"], 2),
+        "Grasas (g)": round(portion * data["fat"], 2),
     }
 
 
-def portions_to_rows(meal: str, portions: dict[str, float]) -> list[dict[str, float | str]]:
-    rows = []
-    for food, portion in portions.items():
-        if portion <= 1e-8:
-            continue
-        data = FOOD_DATABASE[food]
-        rows.append(
-            {
-                "Comida": meal,
-                "Alimento": food,
-                "Gramos": round(portion * 100, 2),
-                "Proteína (g)": round(portion * data["protein"], 2),
-                "Carbohidratos (g)": round(portion * data["carbs"], 2),
-                "Grasas (g)": round(portion * data["fat"], 2),
-            }
-        )
-    return rows
-
-
-def solve_morning_meal(
+def add_food_portion(
+    plan: dict[tuple[str, str, str], float],
     meal: str,
-    nutrition: dict[str, float],
-    share: float,
+    recipe: str,
+    food: str,
+    grams: float,
+) -> None:
+    if grams > 1e-7:
+        key = (meal, recipe, food)
+        plan[key] = plan.get(key, 0.0) + grams
+
+
+def plan_macros(plan: dict[tuple[str, str, str], float]) -> dict[str, float]:
+    totals = {"protein": 0.0, "carbs": 0.0, "fat": 0.0}
+    for (_, _, food), grams in plan.items():
+        for nutrient in totals:
+            totals[nutrient] += grams / 100 * float(FOOD_DATABASE[food][nutrient])
+    return totals
+
+
+def morning_base_plan(
+    meals_per_day: int,
     excluded: set[str],
-    avoided_combos: set[tuple[str, str, str]] | None = None,
-) -> tuple[list[dict[str, float | str]], tuple[str, str, str]]:
-    """Busca aleatoriamente una combinación lógica y no negativa para desayuno/merienda."""
-    target = macro_target(nutrition, share)
-    avoided_combos = avoided_combos or set()
-    combos = [combo for combo in combinations(BREAKFAST_OPTIONS, 3) if not excluded.intersection(combo)]
-    shuffle(combos)
-    for combo in combos:
-        if combo in avoided_combos:
-            continue
-        solution = solve_three_foods(combo, target)
-        if solution is not None:
-            return portions_to_rows(meal, dict(zip(combo, solution))), combo
-    raise ValueError(f"No existe una combinación válida para {meal} con las exclusiones actuales.")
-
-
-def solve_main_meal(
-    meal: str,
-    nutrition: dict[str, float],
-    share: float,
-    primary_protein: str,
-    primary_carb: str,
-    excluded: set[str],
-) -> list[dict[str, float | str]]:
-    """Incluye las elecciones aleatorias y usa correctores para cuadrar los macros exactos."""
-    target = macro_target(nutrition, share)
-    safe_proteins = [food for food in PROTEIN_OPTIONS if food not in excluded]
-    safe_carbs = [food for food in MAIN_CARB_OPTIONS if food not in excluded]
-    protein_corrector = min(safe_proteins, key=lambda food: FOOD_DATABASE[food]["fat"] / FOOD_DATABASE[food]["protein"])
-    carb_corrector = min(safe_carbs, key=lambda food: FOOD_DATABASE[food]["protein"] / FOOD_DATABASE[food]["carbs"])
-
-    protein_primary_portion = target["protein"] * 0.25 / FOOD_DATABASE[primary_protein]["protein"]
-    carb_primary_portion = target["carbs"] * 0.25 / FOOD_DATABASE[primary_carb]["carbs"]
-    carb_corrector_portion = (
-        target["carbs"] - carb_primary_portion * FOOD_DATABASE[primary_carb]["carbs"]
-    ) / FOOD_DATABASE[carb_corrector]["carbs"]
-    protein_corrector_portion = (
-        target["protein"]
-        - protein_primary_portion * FOOD_DATABASE[primary_protein]["protein"]
-        - carb_primary_portion * FOOD_DATABASE[primary_carb]["protein"]
-        - carb_corrector_portion * FOOD_DATABASE[carb_corrector]["protein"]
-    ) / FOOD_DATABASE[protein_corrector]["protein"]
-    fat_used = sum(
-        portion * FOOD_DATABASE[food]["fat"]
-        for food, portion in [
-            (primary_protein, protein_primary_portion),
-            (primary_carb, carb_primary_portion),
-            (protein_corrector, protein_corrector_portion),
-            (carb_corrector, carb_corrector_portion),
-        ]
+    high_carb_day: bool,
+    daily_carbs: float,
+) -> dict[tuple[str, str, str], float]:
+    """Crea desayunos y snacks reconocibles con huevos siempre en unidades completas."""
+    if meals_per_day == 4 and high_carb_day:
+        layouts = {
+            "Desayuno": {"Avena seca": 40.0, "Huevo entero": 50.0, "Leche semidesnatada": 200.0, "Plátano": 100.0},
+            "Merienda": {"Avena seca": 20.0, "Leche semidesnatada": 200.0, "Plátano": 100.0},
+        }
+    elif meals_per_day == 5 and high_carb_day:
+        layouts = {
+            "Desayuno": {"Avena seca": 30.0, "Huevo entero": 50.0, "Leche semidesnatada": 150.0, "Plátano": 70.0},
+            "Media Mañana": {"Avena seca": 15.0, "Leche semidesnatada": 150.0, "Plátano": 60.0},
+            "Merienda": {"Avena seca": 15.0, "Leche semidesnatada": 100.0, "Plátano": 70.0},
+        }
+    elif meals_per_day == 4:
+        layouts = {
+            "Desayuno": {"Avena seca": 60.0, "Huevo entero": 50.0, "Leche semidesnatada": 200.0, "Plátano": 100.0},
+            "Merienda": {"Avena seca": 40.0, "Leche semidesnatada": 200.0, "Plátano": 100.0},
+        }
+    else:
+        layouts = {
+            "Desayuno": {"Avena seca": 50.0, "Huevo entero": 50.0, "Leche semidesnatada": 150.0, "Plátano": 80.0},
+            "Media Mañana": {"Avena seca": 25.0, "Leche semidesnatada": 200.0, "Plátano": 80.0},
+            "Merienda": {"Avena seca": 30.0, "Leche semidesnatada": 150.0, "Plátano": 80.0},
+        }
+    layout_carbs = sum(
+        grams / 100 * float(FOOD_DATABASE[food]["carbs"])
+        for foods in layouts.values()
+        for food, grams in foods.items()
+        if food not in excluded and food != "Huevo entero"
     )
-    oil_portion = (target["fat"] - fat_used) / FOOD_DATABASE["Aceite de oliva"]["fat"]
-    portions: dict[str, float] = {}
-    for food, portion in [
-        (primary_protein, protein_primary_portion),
-        (primary_carb, carb_primary_portion),
-        (protein_corrector, protein_corrector_portion),
-        (carb_corrector, carb_corrector_portion),
-        ("Aceite de oliva", oil_portion),
-    ]:
-        portions[food] = portions.get(food, 0) + portion
-    if any(value < -1e-8 for value in portions.values()):
-        raise ValueError(f"La combinación aleatoria de {meal} no admite una solución positiva.")
-    return portions_to_rows(meal, portions)
+    morning_carb_budget = daily_carbs * (0.72 if high_carb_day else 0.55)
+    morning_scale = min(1.0, morning_carb_budget / max(layout_carbs, 1e-9))
+    plan: dict[tuple[str, str, str], float] = {}
+    for meal, foods in layouts.items():
+        recipe = MORNING_RECIPE_NAMES[meal]
+        available_count = 0
+        for food, grams in foods.items():
+            if food not in excluded:
+                if food != "Huevo entero":
+                    grams *= morning_scale
+                add_food_portion(plan, meal, recipe, food, grams)
+                available_count += 1
+        if not available_count:
+            raise ValueError(f"No quedan ingredientes compatibles para preparar {meal.lower()}.")
+    return plan
+
+
+def build_recipe_candidate(
+    nutrition: dict[str, float],
+    meals_per_day: int,
+    excluded: set[str],
+    lunch_protein: str,
+    dinner_protein: str,
+    lunch_carb: str,
+    dinner_carb: str,
+) -> tuple[float, dict[tuple[str, str, str], float]] | None:
+    """Cierra los macros del día con dos platos principales de proteína única."""
+    carb_protein_ratio = nutrition["carbs_g"] / max(nutrition["protein_g"], 1)
+    high_carb_day = carb_protein_ratio > 3
+    very_high_carb_day = carb_protein_ratio > 5 and "Miel" not in excluded
+    lunch_recipe = MAIN_RECIPE_CATALOG[(lunch_protein, lunch_carb)]
+    dinner_recipe = MAIN_RECIPE_CATALOG[(dinner_protein, dinner_carb)]
+    best_candidate: tuple[float, dict[tuple[str, str, str], float]] | None = None
+    for protein_grams in (150.0, 125.0, 100.0, 75.0, 50.0, 25.0):
+        plan = morning_base_plan(meals_per_day, excluded, high_carb_day, nutrition["carbs_g"])
+        add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_protein, protein_grams)
+        add_food_portion(plan, "Cena", dinner_recipe, dinner_protein, protein_grams)
+        if very_high_carb_day:
+            add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_carb, 150.0)
+            add_food_portion(plan, "Cena", dinner_recipe, dinner_carb, 150.0)
+
+        used = plan_macros(plan)
+        remaining = {
+            "protein": nutrition["protein_g"] - used["protein"],
+            "carbs": nutrition["carbs_g"] - used["carbs"],
+            "fat": nutrition["fat_g"] - used["fat"],
+        }
+        if min(remaining.values()) < -1e-7:
+            continue
+
+        egg_white_carb_ratio = (
+            float(FOOD_DATABASE["Claras de huevo"]["carbs"])
+            / float(FOOD_DATABASE["Claras de huevo"]["protein"])
+        )
+        remaining_carb_ratio = remaining["carbs"] / max(remaining["protein"], 1e-9)
+        if "Claras de huevo" not in excluded and remaining_carb_ratio >= egg_white_carb_ratio:
+            protein_corrector = "Claras de huevo"
+            corrector_meal = "Desayuno"
+            corrector_recipe = MORNING_RECIPE_NAMES["Desayuno"]
+        else:
+            protein_corrector = lunch_protein
+            corrector_meal = "Comida (Mediodía)"
+            corrector_recipe = lunch_recipe
+
+        if very_high_carb_day:
+            carb_vector = {
+                nutrient: float(FOOD_DATABASE["Miel"][nutrient])
+                for nutrient in ("protein", "carbs", "fat")
+            }
+        else:
+            carb_vector = {
+                nutrient: (
+                    float(FOOD_DATABASE[lunch_carb][nutrient])
+                    + float(FOOD_DATABASE[dinner_carb][nutrient])
+                ) / 2
+                for nutrient in ("protein", "carbs", "fat")
+            }
+        corrector_vector = {
+            nutrient: float(FOOD_DATABASE[protein_corrector][nutrient])
+            for nutrient in ("protein", "carbs", "fat")
+        }
+        oil_vector = {
+            nutrient: float(FOOD_DATABASE["Aceite de oliva"][nutrient])
+            for nutrient in ("protein", "carbs", "fat")
+        }
+        solution = solve_macro_vectors((corrector_vector, carb_vector, oil_vector), remaining)
+        if solution is None:
+            continue
+        corrector_portion, carb_portion, oil_portion = solution
+        add_food_portion(plan, corrector_meal, corrector_recipe, protein_corrector, corrector_portion * 100)
+        if very_high_carb_day:
+            add_food_portion(plan, "Desayuno", MORNING_RECIPE_NAMES["Desayuno"], "Miel", carb_portion * 50)
+            add_food_portion(plan, "Merienda", MORNING_RECIPE_NAMES["Merienda"], "Miel", carb_portion * 50)
+        else:
+            add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_carb, carb_portion * 50)
+            add_food_portion(plan, "Cena", dinner_recipe, dinner_carb, carb_portion * 50)
+        add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, "Aceite de oliva", oil_portion * 50)
+        add_food_portion(plan, "Cena", dinner_recipe, "Aceite de oliva", oil_portion * 50)
+
+        lunch_protein_grams = plan[("Comida (Mediodía)", lunch_recipe, lunch_protein)]
+        dinner_protein_grams = plan[("Cena", dinner_recipe, dinner_protein)]
+        portion_penalty = (
+            max(0.0, 100 - lunch_protein_grams)
+            + max(0.0, lunch_protein_grams - 175)
+            + max(0.0, 100 - dinner_protein_grams)
+            + max(0.0, dinner_protein_grams - 175)
+        ) * 4
+        score = (
+            abs(lunch_protein_grams - 137.5)
+            + abs(dinner_protein_grams - 137.5)
+            + portion_penalty
+            + max(0.0, corrector_portion * 100 - 250) * 0.6
+            + max(0.0, oil_portion * 100 - 35) * 2
+        )
+        if best_candidate is None or score < best_candidate[0]:
+            best_candidate = score, plan
+    return best_candidate
 
 
 def build_dynamic_menu(
@@ -544,34 +674,47 @@ def build_dynamic_menu(
     excluded: set[str] | None = None,
     meals_per_day: int = 4,
 ) -> list[dict[str, float | str]]:
-    """Distribuye exactamente los macros diarios entre cuatro o cinco comidas."""
+    """Construye recetas variadas y cierra exactamente los macros del día completo."""
     if meals_per_day not in (4, 5):
         raise ValueError("El número de comidas debe ser 4 o 5.")
-    excluded = excluded or set()
+    excluded = set(excluded or set())
+    if "Huevo entero" in excluded:
+        excluded.add("Claras de huevo")
     proteins = [food for food in PROTEIN_OPTIONS if food not in excluded]
     carbs = [food for food in MAIN_CARB_OPTIONS if food not in excluded]
     if len(proteins) < 2 or len(carbs) < 2 or "Aceite de oliva" in excluded:
-        raise ValueError("No quedan suficientes alternativas para crear comida y cena distintas.")
-    chosen_proteins = sample(proteins, 2)
-    chosen_carbs = sample(carbs, 2)
+        raise ValueError("No quedan alternativas suficientes para crear comida y cena variadas.")
 
-    if meals_per_day == 4:
-        breakfast_share, mid_morning_share, snack_share = 0.25, 0.0, 0.15
-    else:
-        breakfast_share, mid_morning_share, snack_share = 0.20, 0.10, 0.10
+    candidates: list[tuple[float, dict[tuple[str, str, str], float]]] = []
+    protein_pairs = [(first, second) for first in proteins for second in proteins if first != second]
+    carb_pairs = [(first, second) for first in carbs for second in carbs if first != second]
+    shuffle(protein_pairs)
+    shuffle(carb_pairs)
+    for lunch_protein, dinner_protein in protein_pairs:
+        for lunch_carb, dinner_carb in carb_pairs:
+            candidate = build_recipe_candidate(
+                nutrition,
+                meals_per_day,
+                excluded,
+                lunch_protein,
+                dinner_protein,
+                lunch_carb,
+                dinner_carb,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+    if not candidates:
+        raise ValueError("Las exclusiones actuales no permiten construir un menú completo con macros positivos.")
 
-    breakfast, breakfast_combo = solve_morning_meal("Desayuno", nutrition, breakfast_share, excluded)
-    avoided_combos = {breakfast_combo}
-    mid_morning: list[dict[str, float | str]] = []
-    if mid_morning_share:
-        mid_morning, mid_morning_combo = solve_morning_meal(
-            "Media Mañana", nutrition, mid_morning_share, excluded, avoided_combos
-        )
-        avoided_combos.add(mid_morning_combo)
-    snack, _ = solve_morning_meal("Merienda", nutrition, snack_share, excluded, avoided_combos)
-    lunch = solve_main_meal("Comida (Mediodía)", nutrition, 0.30, chosen_proteins[0], chosen_carbs[0], excluded)
-    dinner = solve_main_meal("Cena", nutrition, 0.30, chosen_proteins[1], chosen_carbs[1], excluded)
-    return breakfast + mid_morning + lunch + snack + dinner
+    candidates.sort(key=lambda candidate: candidate[0])
+    best_pool = candidates[: min(4, len(candidates))]
+    _, selected_plan = choice(best_pool)
+    meal_order = {"Desayuno": 0, "Media Mañana": 1, "Comida (Mediodía)": 2, "Merienda": 3, "Cena": 4}
+    ordered_items = sorted(selected_plan.items(), key=lambda item: (meal_order[item[0][0]], item[0][2]))
+    return [
+        grams_to_row(meal, recipe, food, grams)
+        for (meal, recipe, food), grams in ordered_items
+    ]
 
 
 def fatigue_score(sleep_hours: float, discomfort: str) -> int:
@@ -845,6 +988,32 @@ def profile_page() -> None:
         tutor_page(embedded=True)
 
 
+def cooking_suggestions(meal: str, recipe: str, foods: set[str]) -> list[str]:
+    """Genera ideas culinarias locales usando los ingredientes de la propia comida."""
+    suggestions = [f"🍽️ **Plato principal:** prepara {recipe.lower()} y reparte exactamente las cantidades indicadas."]
+    if "Avena seca" in foods and "Huevo entero" in foods:
+        suggestions.append("🥞 **Alternativa:** tritura la avena, el huevo y el plátano para hacer tortitas en sartén.")
+        suggestions.append("☕ **Snack rápido:** cocina la misma mezcla en una taza durante 1-2 minutos para un mugcake.")
+    elif "Avena seca" in foods and "Leche semidesnatada" in foods:
+        suggestions.append("🥣 **Alternativa:** deja avena y leche en frío durante la noche para un porridge rápido.")
+    if "Plátano" in foods and "Leche semidesnatada" in foods:
+        suggestions.append("🥤 **Opción rápida:** bate el plátano con la leche; añade la avena si quieres más textura.")
+    if "Miel" in foods:
+        suggestions.append("🍯 **Topping:** reparte la miel calculada sobre las tortitas, el porridge o el batido del día.")
+    if "Arroz blanco cocido" in foods:
+        suggestions.append("🍚 **Idea de cocina:** saltea el arroz con especias y la proteína ya cocinada, sin añadir otro aceite.")
+        suggestions.append("⚡ **Aperitivo rápido:** reserva parte del arroz calculado y sírvelo como mini bowl; no suma macros extra.")
+    if "Pasta integral cocida" in foods:
+        suggestions.append("🍝 **Idea de cocina:** sirve la pasta templada con hierbas y la única proteína indicada en el plato.")
+        suggestions.append("⚡ **Aperitivo rápido:** aparta una pequeña porción como ensalada fría, dentro de los gramos calculados.")
+    if "Patata cocida" in foods:
+        suggestions.append("🥔 **Idea de cocina:** termina la patata en horno o airfryer con especias y el aceite asignado.")
+        suggestions.append("⚡ **Aperitivo rápido:** corta parte de la patata en dados crujientes usando la misma ración del plato.")
+    if meal in ("Comida (Mediodía)", "Cena"):
+        suggestions.append("🥗 **Acompañamiento libre:** añade verduras sin sustituir ni mezclar la proteína principal calculada.")
+    return suggestions[:4]
+
+
 def render_menu_by_meal(menu_rows: list[dict[str, float | str]]) -> None:
     """Presenta las comidas disponibles en pestañas horizontales compactas."""
     meal_sections = [
@@ -868,8 +1037,11 @@ def render_menu_by_meal(menu_rows: list[dict[str, float | str]]) -> None:
     for tab, (meal, icon, meal_rows) in zip(tabs, visible_sections):
         with tab:
             st.markdown(f"### {icon} {meal}")
+            recipes = list(dict.fromkeys(str(row.get("Receta", "Plato personalizado")) for row in meal_rows))
+            st.markdown(f"#### 🍲 {' + '.join(recipes)}")
+            st.caption("Una receta completa con cantidades exactas y referencias fáciles para cocinar.")
             display_rows = [
-                {key: value for key, value in row.items() if key != "Comida"}
+                {key: value for key, value in row.items() if key not in ("Comida", "Receta")}
                 for row in meal_rows
             ]
             st.dataframe(display_rows, width="stretch", hide_index=True)
@@ -881,6 +1053,10 @@ def render_menu_by_meal(menu_rows: list[dict[str, float | str]]) -> None:
                 f"Total: {total_grams:.1f} g de alimentos · "
                 f"P {protein:.1f} g · C {carbs:.1f} g · G {fat:.1f} g"
             )
+            foods = {str(row["Alimento"]) for row in meal_rows}
+            with st.expander("🍳 Sugerencias de Cocina y Snacks"):
+                for suggestion in cooking_suggestions(meal, recipes[0], foods):
+                    st.markdown(suggestion)
 
 
 def render_daily_plan(plan: dict) -> None:
