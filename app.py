@@ -296,6 +296,48 @@ FOOD_DATABASE = {
         "fdc_id": 169640,
         "category": "breakfast",
     },
+    "Tortitas de arroz": {
+        "protein": 8.2,
+        "carbs": 81.5,
+        "fat": 2.8,
+        "fdc_id": 170250,
+        "category": "snack_carb",
+    },
+    "Pan integral": {
+        "protein": 12.4,
+        "carbs": 42.7,
+        "fat": 3.5,
+        "fdc_id": 172688,
+        "category": "snack_carb",
+    },
+    "Yogur griego natural 0%": {
+        "protein": 10.3,
+        "carbs": 3.64,
+        "fat": 0.37,
+        "fdc_id": 330137,
+        "category": "snack_protein",
+    },
+    "Fresas": {
+        "protein": 0.67,
+        "carbs": 7.68,
+        "fat": 0.3,
+        "fdc_id": 167762,
+        "category": "fruit",
+    },
+    "Manzana": {
+        "protein": 0.148,
+        "carbs": 15.7,
+        "fat": 0.162,
+        "fdc_id": 1750340,
+        "category": "fruit",
+    },
+    "Almendras": {
+        "protein": 21.5,
+        "carbs": 20.0,
+        "fat": 51.1,
+        "fdc_id": 2346393,
+        "category": "fat_snack",
+    },
 }
 
 FOOD_DATABASE["Pechuga de pollo cocida"]["category"] = "protein"
@@ -318,10 +360,33 @@ MAIN_RECIPE_CATALOG = {
     ("Atún al natural escurrido", "Patata cocida"): "Ensalada templada de patata y atún",
 }
 
-MORNING_RECIPE_NAMES = {
-    "Desayuno": "Tortitas fit de avena y plátano",
-    "Media Mañana": "Vaso cremoso de avena y plátano",
-    "Merienda": "Batido energético de plátano y avena",
+BREAKFAST_RECIPE_NAME = "Tortitas fit de avena y plátano"
+
+SNACK_TEMPLATES = {
+    "sandwich": {
+        "recipe": "Sándwich integral fit con manzana",
+        "foods": {"Pan integral": 60.0, "Manzana": 150.0},
+    },
+    "yogurt": {
+        "recipe": "Bol proteico de yogur, fresas y almendras",
+        "foods": {
+            "Yogur griego natural 0%": 120.0,
+            "Fresas": 150.0,
+            "Tortitas de arroz": 25.0,
+            "Almendras": 10.0,
+        },
+    },
+}
+
+ROTATING_CARB_AND_FRUIT_FOODS = {
+    "Avena seca",
+    "Plátano",
+    "Miel",
+    "Tortitas de arroz",
+    "Pan integral",
+    "Fresas",
+    "Manzana",
+    *MAIN_CARB_OPTIONS,
 }
 
 FOOD_ALIASES = {
@@ -338,11 +403,19 @@ FOOD_ALIASES = {
     "avena": "Avena seca",
     "aceite": "Aceite de oliva",
     "miel": "Miel",
+    "tortitas de arroz": "Tortitas de arroz",
+    "pan integral": "Pan integral",
+    "yogur": "Yogur griego natural 0%",
+    "fresa": "Fresas",
+    "frutos rojos": "Fresas",
+    "manzana": "Manzana",
+    "almendra": "Almendras",
+    "frutos secos": "Almendras",
     "huevo": "Huevo entero",
     "plátano": "Plátano",
     "platano": "Plátano",
     "leche": "Leche semidesnatada",
-    "nueces": "Nueces",
+    "nueces": "Almendras",
 }
 
 REPLACEMENTS = {
@@ -357,8 +430,13 @@ REPLACEMENTS = {
     "Huevo entero": "Claras de huevo",
     "Plátano": "Avena seca",
     "Leche semidesnatada": "Claras de huevo",
-    "Nueces": "Aceite de oliva",
     "Miel": "Plátano",
+    "Tortitas de arroz": "Pan integral",
+    "Pan integral": "Tortitas de arroz",
+    "Yogur griego natural 0%": "Leche semidesnatada",
+    "Fresas": "Manzana",
+    "Manzana": "Fresas",
+    "Almendras": "Aceite de oliva",
 }
 
 
@@ -473,6 +551,22 @@ def practical_measure(food: str, grams: float) -> str:
     if food == "Miel":
         tablespoons = grams / 15
         return f"{tablespoons:.1f} cucharadas"
+    if food == "Tortitas de arroz":
+        units = max(1, round(grams / 9))
+        return f"{units} tortita{'s' if units != 1 else ''} aproximadamente"
+    if food == "Pan integral":
+        slices = max(1, round(grams / 30))
+        return f"{slices} rebanada{'s' if slices != 1 else ''} aproximadamente"
+    if food == "Yogur griego natural 0%":
+        return f"1 bol con {grams:.0f} g"
+    if food == "Fresas":
+        return f"1 bol pequeño de {grams:.0f} g"
+    if food == "Manzana":
+        units = max(0.5, round(grams / 180 * 2) / 2)
+        return f"{units:g} manzana{'s' if units != 1 else ''} aproximadamente"
+    if food == "Almendras":
+        units = max(1, round(grams / 1.2))
+        return f"{units} almendras aproximadamente"
     if food == "Atún al natural escurrido":
         return f"1 ración escurrida de {grams:.0f} g"
     if food in PROTEIN_OPTIONS:
@@ -520,41 +614,54 @@ def morning_base_plan(
     excluded: set[str],
     high_carb_day: bool,
     daily_carbs: float,
+    daily_protein: float,
+    daily_fat: float,
+    snack_variant: str,
 ) -> dict[tuple[str, str, str], float]:
-    """Crea desayunos y snacks reconocibles con huevos siempre en unidades completas."""
-    if meals_per_day == 4 and high_carb_day:
-        layouts = {
-            "Desayuno": {"Avena seca": 40.0, "Huevo entero": 50.0, "Leche semidesnatada": 200.0, "Plátano": 100.0},
-            "Merienda": {"Avena seca": 20.0, "Leche semidesnatada": 200.0, "Plátano": 100.0},
-        }
-    elif meals_per_day == 5 and high_carb_day:
-        layouts = {
-            "Desayuno": {"Avena seca": 30.0, "Huevo entero": 50.0, "Leche semidesnatada": 150.0, "Plátano": 70.0},
-            "Media Mañana": {"Avena seca": 15.0, "Leche semidesnatada": 150.0, "Plátano": 60.0},
-            "Merienda": {"Avena seca": 15.0, "Leche semidesnatada": 100.0, "Plátano": 70.0},
-        }
-    elif meals_per_day == 4:
-        layouts = {
-            "Desayuno": {"Avena seca": 60.0, "Huevo entero": 50.0, "Leche semidesnatada": 200.0, "Plátano": 100.0},
-            "Merienda": {"Avena seca": 40.0, "Leche semidesnatada": 200.0, "Plátano": 100.0},
-        }
+    """Crea desayuno y snacks sin repetir carbohidratos ni frutas durante el día."""
+    breakfast_foods = {
+        "Avena seca": 40.0 if high_carb_day else 55.0,
+        "Huevo entero": 50.0,
+        "Leche semidesnatada": 180.0,
+        "Plátano": 100.0,
+    }
+    snack_order = [snack_variant, "yogurt" if snack_variant == "sandwich" else "sandwich"]
+    layouts: dict[str, tuple[str, dict[str, float]]] = {
+        "Desayuno": (BREAKFAST_RECIPE_NAME, breakfast_foods),
+    }
+    if meals_per_day == 5:
+        first_template = SNACK_TEMPLATES[snack_order[0]]
+        second_template = SNACK_TEMPLATES[snack_order[1]]
+        layouts["Media Mañana"] = (str(first_template["recipe"]), dict(first_template["foods"]))
+        layouts["Merienda"] = (str(second_template["recipe"]), dict(second_template["foods"]))
     else:
-        layouts = {
-            "Desayuno": {"Avena seca": 50.0, "Huevo entero": 50.0, "Leche semidesnatada": 150.0, "Plátano": 80.0},
-            "Media Mañana": {"Avena seca": 25.0, "Leche semidesnatada": 200.0, "Plátano": 80.0},
-            "Merienda": {"Avena seca": 30.0, "Leche semidesnatada": 150.0, "Plátano": 80.0},
-        }
-    layout_carbs = sum(
-        grams / 100 * float(FOOD_DATABASE[food]["carbs"])
-        for foods in layouts.values()
-        for food, grams in foods.items()
-        if food not in excluded and food != "Huevo entero"
-    )
+        template = SNACK_TEMPLATES[snack_order[0]]
+        layouts["Merienda"] = (str(template["recipe"]), dict(template["foods"]))
+
+    scalable_totals = {"protein": 0.0, "carbs": 0.0, "fat": 0.0}
+    fixed_totals = {"protein": 0.0, "carbs": 0.0, "fat": 0.0}
+    for _, foods in layouts.values():
+        for food, grams in foods.items():
+            if food in excluded:
+                continue
+            destination = fixed_totals if food == "Huevo entero" else scalable_totals
+            for nutrient in destination:
+                destination[nutrient] += grams / 100 * float(FOOD_DATABASE[food][nutrient])
+
     morning_carb_budget = daily_carbs * (0.72 if high_carb_day else 0.55)
-    morning_scale = min(1.0, morning_carb_budget / max(layout_carbs, 1e-9))
+    morning_protein_budget = daily_protein * (0.45 if meals_per_day == 5 else 0.62)
+    morning_fat_budget = daily_fat * (0.55 if meals_per_day == 5 else 0.65)
+    morning_scale = min(
+        1.0,
+        max(0.0, morning_carb_budget - fixed_totals["carbs"])
+        / max(scalable_totals["carbs"], 1e-9),
+        max(0.0, morning_protein_budget - fixed_totals["protein"])
+        / max(scalable_totals["protein"], 1e-9),
+        max(0.0, morning_fat_budget - fixed_totals["fat"])
+        / max(scalable_totals["fat"], 1e-9),
+    )
     plan: dict[tuple[str, str, str], float] = {}
-    for meal, foods in layouts.items():
-        recipe = MORNING_RECIPE_NAMES[meal]
+    for meal, (recipe, foods) in layouts.items():
         available_count = 0
         for food, grams in foods.items():
             if food not in excluded:
@@ -575,6 +682,7 @@ def build_recipe_candidate(
     dinner_protein: str,
     lunch_carb: str,
     dinner_carb: str,
+    snack_variant: str,
 ) -> tuple[float, dict[tuple[str, str, str], float]] | None:
     """Cierra los macros del día con dos platos principales de proteína única."""
     carb_protein_ratio = nutrition["carbs_g"] / max(nutrition["protein_g"], 1)
@@ -584,7 +692,15 @@ def build_recipe_candidate(
     dinner_recipe = MAIN_RECIPE_CATALOG[(dinner_protein, dinner_carb)]
     best_candidate: tuple[float, dict[tuple[str, str, str], float]] | None = None
     for protein_grams in (150.0, 125.0, 100.0, 75.0, 50.0, 25.0):
-        plan = morning_base_plan(meals_per_day, excluded, high_carb_day, nutrition["carbs_g"])
+        plan = morning_base_plan(
+            meals_per_day,
+            excluded,
+            high_carb_day,
+            nutrition["carbs_g"],
+            nutrition["protein_g"],
+            nutrition["fat_g"],
+            snack_variant,
+        )
         add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_protein, protein_grams)
         add_food_portion(plan, "Cena", dinner_recipe, dinner_protein, protein_grams)
         if very_high_carb_day:
@@ -608,7 +724,7 @@ def build_recipe_candidate(
         if "Claras de huevo" not in excluded and remaining_carb_ratio >= egg_white_carb_ratio:
             protein_corrector = "Claras de huevo"
             corrector_meal = "Desayuno"
-            corrector_recipe = MORNING_RECIPE_NAMES["Desayuno"]
+            corrector_recipe = BREAKFAST_RECIPE_NAME
         else:
             protein_corrector = lunch_protein
             corrector_meal = "Comida (Mediodía)"
@@ -641,8 +757,12 @@ def build_recipe_candidate(
         corrector_portion, carb_portion, oil_portion = solution
         add_food_portion(plan, corrector_meal, corrector_recipe, protein_corrector, corrector_portion * 100)
         if very_high_carb_day:
-            add_food_portion(plan, "Desayuno", MORNING_RECIPE_NAMES["Desayuno"], "Miel", carb_portion * 50)
-            add_food_portion(plan, "Merienda", MORNING_RECIPE_NAMES["Merienda"], "Miel", carb_portion * 50)
+            snack_recipe = next(
+                recipe
+                for meal, recipe, _ in plan
+                if meal == "Merienda"
+            )
+            add_food_portion(plan, "Merienda", snack_recipe, "Miel", carb_portion * 100)
         else:
             add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_carb, carb_portion * 50)
             add_food_portion(plan, "Cena", dinner_recipe, dinner_carb, carb_portion * 50)
@@ -669,6 +789,26 @@ def build_recipe_candidate(
     return best_candidate
 
 
+def validate_carb_rotation(plan: dict[tuple[str, str, str], float]) -> None:
+    """Impide que un carbohidrato principal o una fruta aparezca en dos comidas."""
+    meal_order = ("Desayuno", "Media Mañana", "Comida (Mediodía)", "Merienda", "Cena")
+    first_meal_by_food: dict[str, str] = {}
+    for meal in meal_order:
+        meal_foods = {
+            food
+            for current_meal, _, food in plan
+            if current_meal == meal and food in ROTATING_CARB_AND_FRUIT_FOODS
+        }
+        repeated = meal_foods.intersection(first_meal_by_food)
+        if repeated:
+            details = ", ".join(
+                f"{food} ({first_meal_by_food[food]} y {meal})"
+                for food in sorted(repeated)
+            )
+            raise ValueError(f"Rotación de carbohidratos inválida: {details}.")
+        first_meal_by_food.update({food: meal for food in meal_foods})
+
+
 def build_dynamic_menu(
     nutrition: dict[str, float],
     excluded: set[str] | None = None,
@@ -688,27 +828,32 @@ def build_dynamic_menu(
     candidates: list[tuple[float, dict[tuple[str, str, str], float]]] = []
     protein_pairs = [(first, second) for first in proteins for second in proteins if first != second]
     carb_pairs = [(first, second) for first in carbs for second in carbs if first != second]
+    snack_variants = list(SNACK_TEMPLATES)
     shuffle(protein_pairs)
     shuffle(carb_pairs)
-    for lunch_protein, dinner_protein in protein_pairs:
-        for lunch_carb, dinner_carb in carb_pairs:
-            candidate = build_recipe_candidate(
-                nutrition,
-                meals_per_day,
-                excluded,
-                lunch_protein,
-                dinner_protein,
-                lunch_carb,
-                dinner_carb,
-            )
-            if candidate is not None:
-                candidates.append(candidate)
+    shuffle(snack_variants)
+    for snack_variant in snack_variants:
+        for lunch_protein, dinner_protein in protein_pairs:
+            for lunch_carb, dinner_carb in carb_pairs:
+                candidate = build_recipe_candidate(
+                    nutrition,
+                    meals_per_day,
+                    excluded,
+                    lunch_protein,
+                    dinner_protein,
+                    lunch_carb,
+                    dinner_carb,
+                    snack_variant,
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
     if not candidates:
         raise ValueError("Las exclusiones actuales no permiten construir un menú completo con macros positivos.")
 
     candidates.sort(key=lambda candidate: candidate[0])
     best_pool = candidates[: min(4, len(candidates))]
     _, selected_plan = choice(best_pool)
+    validate_carb_rotation(selected_plan)
     meal_order = {"Desayuno": 0, "Media Mañana": 1, "Comida (Mediodía)": 2, "Merienda": 3, "Cena": 4}
     ordered_items = sorted(selected_plan.items(), key=lambda item: (meal_order[item[0][0]], item[0][2]))
     return [
@@ -1000,6 +1145,16 @@ def cooking_suggestions(meal: str, recipe: str, foods: set[str]) -> list[str]:
         suggestions.append("🥤 **Opción rápida:** bate el plátano con la leche; añade la avena si quieres más textura.")
     if "Miel" in foods:
         suggestions.append("🍯 **Topping:** reparte la miel calculada sobre las tortitas, el porridge o el batido del día.")
+    if "Pan integral" in foods:
+        suggestions.append("🥪 **Sándwich fit:** tuesta el pan y prepara un sándwich ligero respetando la ración calculada.")
+    if "Manzana" in foods:
+        suggestions.append("🍎 **Snack práctico:** lleva la manzana entera o córtala en gajos junto al sándwich.")
+    if "Yogur griego natural 0%" in foods and "Fresas" in foods:
+        suggestions.append("🍓 **Bol proteico:** mezcla el yogur con las fresas y sírvelo bien frío.")
+    if "Tortitas de arroz" in foods:
+        suggestions.append("🍘 **Aperitivo crujiente:** usa las tortitas de arroz como base y acompáñalas con el bol.")
+    if "Almendras" in foods:
+        suggestions.append("🌰 **Topping medido:** trocea las almendras sobre el yogur sin superar los gramos indicados.")
     if "Arroz blanco cocido" in foods:
         suggestions.append("🍚 **Idea de cocina:** saltea el arroz con especias y la proteína ya cocinada, sin añadir otro aceite.")
         suggestions.append("⚡ **Aperitivo rápido:** reserva parte del arroz calculado y sírvelo como mini bowl; no suma macros extra.")
