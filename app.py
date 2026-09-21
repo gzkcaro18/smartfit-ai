@@ -927,7 +927,14 @@ def build_recipe_candidate(
             return meal, "Boniato al horno para completar energía"
         return "Merienda", "Acompañamiento calculado"
 
-    main_carb_portions = (300.0, 250.0) if high_carb_day else (250.0, 200.0, 150.0, 100.0, 50.0)
+    # Los perfiles de definición pueden terminar con un presupuesto diario de
+    # carbohidratos muy bajo. Mantener opciones pequeñas evita declarar el menú
+    # imposible sin obligar a usar raciones grandes o cantidades negativas.
+    main_carb_portions = (
+        (300.0, 250.0)
+        if high_carb_day
+        else (250.0, 200.0, 150.0, 100.0, 75.0, 50.0, 35.0, 25.0)
+    )
     for protein_grams in (150.0, 135.0, 165.0, 120.0, 180.0):
         for main_carb_grams in main_carb_portions:
             plan = morning_base_plan(
@@ -2471,6 +2478,69 @@ def tutor_page(embedded: bool = False) -> None:
         with st.chat_message(message["role"], avatar=avatar):
             st.write(message["content"])
 
+    # Contraste estricto para las entradas renderizadas dentro de la vista del Tutor IA.
+    st.markdown(
+        """
+        <style>
+        /* Fuerza el color de la caja de texto en cualquier estado (activo o deshabilitado) */
+        .stTextInput input,
+        .stTextInput input:disabled,
+        [data-testid="stTextInput"] input {
+            color: #111111 !important;
+            -webkit-text-fill-color: #111111 !important;
+            background-color: #ffffff !important;
+            opacity: 1 !important;
+        }
+
+        /* Fuerza que el texto de ejemplo (placeholder) sea gris oscuro bien visible */
+        .stTextInput input::placeholder,
+        [data-testid="stTextInput"] input::placeholder {
+            color: #555555 !important;
+            -webkit-text-fill-color: #555555 !important;
+            opacity: 1 !important;
+        }
+
+        /* Streamlit renderiza la barra inferior del Tutor como este textarea. */
+        [data-testid="stChatInput"] {
+            background-color: #ffffff !important;
+        }
+        [data-testid="stChatInputTextArea"],
+        [data-testid="stChatInputTextArea"]:hover,
+        [data-testid="stChatInputTextArea"]:focus,
+        [data-testid="stChatInputTextArea"]:focus-visible,
+        [data-testid="stChatInputTextArea"]:active,
+        [data-testid="stChatInputTextArea"]:disabled,
+        [data-testid="stChatInputTextArea"]:autofill,
+        [data-testid="stChatInputTextArea"]:-webkit-autofill {
+            color: #111111 !important;
+            -webkit-text-fill-color: #111111 !important;
+            background-color: #ffffff !important;
+            caret-color: #111111 !important;
+            opacity: 1 !important;
+            text-shadow: none !important;
+        }
+        [data-testid="stChatInputTextArea"]::placeholder {
+            color: #555555 !important;
+            -webkit-text-fill-color: #555555 !important;
+            opacity: 1 !important;
+        }
+        [data-testid="stChatInputTextArea"]::spelling-error,
+        [data-testid="stChatInputTextArea"]::grammar-error {
+            color: #111111 !important;
+            -webkit-text-fill-color: #111111 !important;
+            background-color: transparent !important;
+            text-decoration-color: #d93025 !important;
+        }
+        [data-testid="stChatInputTextArea"]::selection {
+            color: #111111 !important;
+            -webkit-text-fill-color: #111111 !important;
+            background-color: #b9e7ff !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     prompt = st.chat_input("Ej.: “Soy alérgico al atún” o “No me gusta el salmón”")
     if prompt:
         st.session_state.chat_history.append({"role": "user", "content": prompt})
@@ -3177,6 +3247,55 @@ def require_password() -> None:
         .block-container {
             max-width: 34rem !important;
             padding-top: 18vh !important;
+        }
+        /* Contraste del campo de contraseña, incluido el estado revelado con el icono del ojo. */
+        [data-testid="stTextInput"] input,
+        [data-testid="stTextInput"] input:hover,
+        [data-testid="stTextInput"] input:focus,
+        [data-testid="stTextInput"] input:focus-visible,
+        [data-testid="stTextInput"] input:active,
+        [data-testid="stTextInput"] input:disabled,
+        [data-testid="stTextInput"] input:autofill,
+        [data-testid="stTextInput"] input:-webkit-autofill {
+            color: #111111 !important;
+            -webkit-text-fill-color: #111111 !important;
+            background-color: #ffffff !important;
+            caret-color: #111111 !important;
+            opacity: 1 !important;
+            text-shadow: none !important;
+        }
+        [data-testid="stTextInput"] input::placeholder {
+            color: #555555 !important;
+            -webkit-text-fill-color: #555555 !important;
+            opacity: 1 !important;
+        }
+        [data-testid="stTextInputRootElement"],
+        [data-testid="stTextInputRootElement"] > div {
+            background-color: #ffffff !important;
+        }
+        [data-testid="stTextInput"] button,
+        button[aria-label="Show password"],
+        button[aria-label="Hide password"] {
+            color: #111111 !important;
+            background-color: transparent !important;
+            opacity: 1 !important;
+        }
+        [data-testid="stTextInput"] button svg,
+        [data-testid="stTextInput"] button svg path,
+        button[aria-label="Show password"] svg,
+        button[aria-label="Show password"] svg path,
+        button[aria-label="Hide password"] svg,
+        button[aria-label="Hide password"] svg path {
+            color: #111111 !important;
+            fill: #111111 !important;
+            stroke: #111111 !important;
+            opacity: 1 !important;
+        }
+        button[aria-label="Show password"] *,
+        button[aria-label="Hide password"] * {
+            color: #111111 !important;
+            -webkit-text-fill-color: #111111 !important;
+            opacity: 1 !important;
         }
         </style>
         """,
