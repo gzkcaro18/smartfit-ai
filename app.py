@@ -6,7 +6,7 @@ import hmac
 from datetime import datetime
 from html import escape
 from io import BytesIO
-from itertools import permutations
+from itertools import combinations, permutations
 from math import ceil
 from random import choice, shuffle
 import time
@@ -18,6 +18,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 # Candado local solicitado para este prototipo.
@@ -198,6 +199,21 @@ CARDIO_RECOMMENDATIONS = {
     },
 }
 
+REST_BY_GOAL = {
+    "Volumen": (
+        "Descanso: 2 a 3 minutos entre series (Recuperación completa para maximizar la fuerza "
+        "y el movimiento de cargas pesadas en máquinas de discos)"
+    ),
+    "Hipertrofia": (
+        "Descanso: 90 segundos a 2 minutos entre series (Punto óptimo para disipar la fatiga "
+        "acumulada manteniendo la congestión muscular)"
+    ),
+    "Definición": (
+        "Descanso: 60 a 90 segundos entre series (Enfoque metabólico dinámico para mantener "
+        "pulsaciones elevadas y optimizar la sesión)"
+    ),
+}
+
 CORE_BY_WEEKDAY = {
     "Lunes": ("Plancha isométrica", "3 x 45 s", "Aprieta glúteos y abdomen; mantén cabeza, cadera y talones alineados."),
     "Martes": ("Dead bug controlado", "3 x 10 por lado", "Pega la zona lumbar al suelo y extiende brazo y pierna contrarios sin arquearla."),
@@ -276,12 +292,26 @@ FOOD_DATABASE = {
         "fdc_id": 11367,
         "category": "carb",
     },
+    "Boniato al horno": {
+        "protein": 2.01,
+        "carbs": 20.71,
+        "fat": 0.15,
+        "fdc_id": 11510,
+        "category": "carb",
+    },
     "Avena seca": {
         "protein": 16.9,
         "carbs": 66.3,
         "fat": 6.9,
         "fdc_id": 20132,
         "category": "carb",
+    },
+    "Copos de maíz sin azúcar": {
+        "protein": 7.5,
+        "carbs": 84.1,
+        "fat": 0.4,
+        "fdc_id": 8020,
+        "category": "snack_carb",
     },
     "Huevo entero": {
         "protein": 12.6,
@@ -372,7 +402,7 @@ FOOD_DATABASE = {
 FOOD_DATABASE["Pechuga de pollo cocida"]["category"] = "protein"
 FOOD_DATABASE["Arroz blanco cocido"]["category"] = "carb"
 PROTEIN_OPTIONS = [name for name, data in FOOD_DATABASE.items() if data["category"] == "protein"]
-MAIN_CARB_OPTIONS = ["Arroz blanco cocido", "Pasta integral cocida", "Patata cocida"]
+MAIN_CARB_OPTIONS = ["Arroz blanco cocido", "Pasta integral cocida", "Patata cocida", "Boniato al horno"]
 
 SHOPPING_CATEGORIES = {
     "Proteínas / Carnes y lácteos": {
@@ -385,6 +415,7 @@ SHOPPING_CATEGORIES = {
     "Carbohidratos / Granos": {
         *MAIN_CARB_OPTIONS,
         "Avena seca",
+        "Copos de maíz sin azúcar",
         "Tortitas de arroz",
         "Pan integral",
         "Miel",
@@ -409,6 +440,11 @@ MAIN_RECIPE_CATALOG = {
     ("Pavo cocido", "Arroz blanco cocido"): "Arroz salteado con pavo especiado",
     ("Pavo cocido", "Pasta integral cocida"): "Pasta integral con pavo mediterráneo",
     ("Pavo cocido", "Patata cocida"): "Pavo a la plancha con patatas al horno",
+    ("Pechuga de pollo cocida", "Boniato al horno"): "Pollo especiado con boniato al horno",
+    ("Ternera magra cocida", "Boniato al horno"): "Ternera a la plancha con boniato",
+    ("Salmón cocido", "Boniato al horno"): "Salmón al horno con boniato",
+    ("Atún al natural escurrido", "Boniato al horno"): "Ensalada templada de atún y boniato",
+    ("Pavo cocido", "Boniato al horno"): "Pavo especiado con boniato al horno",
 }
 
 BREAKFAST_TEMPLATES = {
@@ -490,6 +526,7 @@ SNACK_TEMPLATES = {
 
 ROTATING_CARB_AND_FRUIT_FOODS = {
     "Avena seca",
+    "Copos de maíz sin azúcar",
     "Plátano",
     "Miel",
     "Tortitas de arroz",
@@ -502,10 +539,12 @@ ROTATING_CARB_AND_FRUIT_FOODS = {
 # Alimentos que no pueden repetirse en la misma franja de dos días consecutivos.
 WEEKLY_ROTATION_FOODS = {
     "Avena seca",
+    "Copos de maíz sin azúcar",
     "Arroz blanco cocido",
     "Patata cocida",
     "Pan integral",
     "Pasta integral cocida",
+    "Boniato al horno",
     "Plátano",
     "Manzana",
     "Fresas",
@@ -523,6 +562,7 @@ FOOD_ALIASES = {
     "arroz": "Arroz blanco cocido",
     "pasta": "Pasta integral cocida",
     "patata": "Patata cocida",
+    "boniato": "Boniato al horno",
     "avena": "Avena seca",
     "aceite": "Aceite de oliva",
     "miel": "Miel",
@@ -550,6 +590,7 @@ REPLACEMENTS = {
     "Arroz blanco cocido": "Patata cocida",
     "Pasta integral cocida": "Arroz blanco cocido",
     "Patata cocida": "Arroz blanco cocido",
+    "Boniato al horno": "Patata cocida",
     "Avena seca": "Patata cocida",
     "Huevo entero": "Claras de huevo",
     "Plátano": "Avena seca",
@@ -583,7 +624,7 @@ def calculate_nutrition(
     bmr = calculate_bmr(age, weight_kg, height_cm, sex)
     maintenance = bmr * ACTIVITY_FACTORS[activity]
     target_calories = max(1200, round(maintenance + GOAL_ADJUSTMENTS[goal]))
-    protein_multiplier = 2.2 if goal == "Definición" else 1.8
+    protein_multiplier = 2.2 if goal in ("Definición", "Volumen") else 1.8
     protein_g = round(weight_kg * protein_multiplier, 1)
     fat_g = round(weight_kg * 0.8, 1)
     base_carbs_g = max(0, round((target_calories - protein_g * 4 - fat_g * 9) / 4, 1))
@@ -803,11 +844,7 @@ def morning_base_plan(
                 destination[nutrient] += grams / 100 * float(FOOD_DATABASE[food][nutrient])
 
     morning_carb_budget = daily_carbs * (0.72 if high_carb_day else 0.55)
-    if high_carb_day:
-        # Deja margen proteico a las fuentes densas de carbohidrato de los snacks.
-        morning_protein_budget = daily_protein * (0.15 if meals_per_day == 5 else 0.12)
-    else:
-        morning_protein_budget = daily_protein * (0.45 if meals_per_day == 5 else 0.38)
+    morning_protein_budget = daily_protein * (0.45 if meals_per_day == 5 else 0.38)
     morning_fat_budget = daily_fat * (0.55 if meals_per_day == 5 else 0.50)
     morning_scale = min(
         1.0,
@@ -842,17 +879,57 @@ def build_recipe_candidate(
     dinner_carb: str,
     breakfast_variant: str,
     snack_variants: tuple[str, ...],
+    forbidden_foods_by_meal: tuple[tuple[str, ...], ...] | None = None,
 ) -> tuple[float, dict[tuple[str, str, str], float]] | None:
-    """Cierra macros con porciones humanas y límites duros en los platos principales."""
+    """Cierra macros con límites humanos y correctores secundarios acotados."""
     carb_protein_ratio = nutrition["carbs_g"] / max(nutrition["protein_g"], 1)
     high_carb_day = carb_protein_ratio > 3
     lunch_recipe = MAIN_RECIPE_CATALOG[(lunch_protein, lunch_carb)]
     dinner_recipe = MAIN_RECIPE_CATALOG[(dinner_protein, dinner_carb)]
     best_candidate: tuple[float, dict[tuple[str, str, str], float]] | None = None
     nutrients = ("protein", "carbs", "fat")
-    oil_vector = {nutrient: float(FOOD_DATABASE["Aceite de oliva"][nutrient]) for nutrient in nutrients}
-    for protein_grams in (150.0, 165.0, 135.0, 180.0, 120.0):
-        for main_carb_grams in (250.0, 275.0, 300.0, 225.0, 200.0, 175.0, 150.0, 125.0, 100.0, 75.0, 50.0, 25.0):
+    portion_limits = {
+        "Claras de huevo": 300.0,
+        "Yogur griego natural 0%": 400.0,
+        "Tortitas de arroz": 60.0,
+        "Pan integral": 160.0,
+        "Avena seca": 100.0,
+        "Copos de maíz sin azúcar": 100.0,
+        "Miel": 90.0,
+        "Boniato al horno": 300.0,
+        "Pasta integral cocida": 300.0,
+        "Plátano": 250.0,
+        "Manzana": 300.0,
+        "Fresas": 300.0,
+        "Aceite de oliva": 60.0,
+    }
+
+    def destination_for(
+        plan: dict[tuple[str, str, str], float], food: str
+    ) -> tuple[str, str] | None:
+        existing = {(meal, recipe) for meal, recipe, current_food in plan if current_food == food}
+        if len(existing) == 1:
+            return next(iter(existing))
+        if len(existing) > 1:
+            return None
+        if food in ("Avena seca", "Copos de maíz sin azúcar", "Claras de huevo"):
+            return "Desayuno", "Refuerzo de desayuno calculado"
+        if food in ("Pan integral", "Tortitas de arroz", "Yogur griego natural 0%"):
+            meal = "Media Mañana" if meals_per_day == 5 else "Merienda"
+            return meal, "Snack energético calculado"
+        if food == "Pasta integral cocida":
+            swap_dense = breakfast_variant in {"toast_eggs", "rice_pudding", "potato_scramble"}
+            meal = "Merienda" if swap_dense or meals_per_day == 4 else "Media Mañana"
+            return meal, "Bowl energético de pasta integral"
+        if food == "Boniato al horno":
+            swap_dense = breakfast_variant in {"toast_eggs", "rice_pudding", "potato_scramble"}
+            meal = "Media Mañana" if swap_dense and meals_per_day == 5 else "Merienda"
+            return meal, "Boniato al horno para completar energía"
+        return "Merienda", "Acompañamiento calculado"
+
+    main_carb_portions = (300.0, 250.0) if high_carb_day else (250.0, 200.0, 150.0, 100.0, 50.0)
+    for protein_grams in (150.0, 135.0, 165.0, 120.0, 180.0):
+        for main_carb_grams in main_carb_portions:
             plan = morning_base_plan(
                 meals_per_day,
                 excluded,
@@ -877,136 +954,109 @@ def build_recipe_candidate(
             if min(remaining.values()) < -1e-7:
                 continue
 
-            protein_correctors = [
-                food
-                for food in ("Claras de huevo", "Yogur griego natural 0%")
-                if food not in excluded
-            ]
-            dense_carbs = ("Tortitas de arroz", "Pan integral", "Avena seca", "Miel")
-            carb_destinations = [
-                (meal, recipe, food)
-                for meal, recipe, food in plan
-                if meal in ("Desayuno", "Media Mañana", "Merienda") and food in dense_carbs
-            ]
-            secondary_meal = "Media Mañana" if meals_per_day == 5 else "Merienda"
-            secondary_recipe = next(
-                recipe for meal, recipe, _ in plan if meal == secondary_meal
-            )
-            present_foods = {food for _, _, food in plan}
-            carb_destinations.extend(
-                (secondary_meal, secondary_recipe, food)
-                for food in dense_carbs
-                if food not in excluded and food not in present_foods
-            )
-            for protein_corrector in protein_correctors:
-                corrector_vector = {
-                    nutrient: float(FOOD_DATABASE[protein_corrector][nutrient])
-                    for nutrient in nutrients
-                }
-                for carb_meal, carb_recipe, carb_corrector in carb_destinations:
-                    carb_vector = {
-                        nutrient: float(FOOD_DATABASE[carb_corrector][nutrient])
-                        for nutrient in nutrients
-                    }
-                    solution = solve_macro_vectors((corrector_vector, carb_vector, oil_vector), remaining)
-                    if solution is None:
-                        continue
-                    corrector_portion, carb_portion, oil_portion = solution
-                    if min(solution) < -1e-7 or corrector_portion * 100 > 650 or oil_portion * 100 > 60:
-                        continue
-                    if carb_corrector == "Miel" and carb_portion * 100 > 60:
-                        continue
-
-                    candidate_plan = dict(plan)
-                    add_food_portion(
-                        candidate_plan,
-                        "Desayuno",
-                        str(BREAKFAST_TEMPLATES[breakfast_variant]["recipe"]),
-                        protein_corrector,
-                        corrector_portion * 100,
-                    )
-                    add_food_portion(
-                        candidate_plan,
-                        carb_meal,
-                        carb_recipe,
-                        carb_corrector,
-                        carb_portion * 100,
-                    )
-                    add_food_portion(candidate_plan, "Comida (Mediodía)", lunch_recipe, "Aceite de oliva", oil_portion * 50)
-                    add_food_portion(candidate_plan, "Cena", dinner_recipe, "Aceite de oliva", oil_portion * 50)
-
-                    totals = plan_macros(candidate_plan)
-                    if any(abs(totals[key] - nutrition[f"{key}_g"]) > 1e-4 for key in nutrients):
-                        continue
-                    lunch_protein_grams = candidate_plan[("Comida (Mediodía)", lunch_recipe, lunch_protein)]
-                    dinner_protein_grams = candidate_plan[("Cena", dinner_recipe, dinner_protein)]
-                    if not (120 <= lunch_protein_grams <= 180 and 120 <= dinner_protein_grams <= 180):
-                        continue
-                    if main_carb_grams > 300:
-                        continue
-                    score = (
-                        abs(lunch_protein_grams - 150)
-                        + abs(dinner_protein_grams - 150)
-                        + abs(main_carb_grams - 300) * 0.65
-                        + max(0.0, corrector_portion * 100 - 350) * 0.5
-                        + max(0.0, carb_portion * 100 - 250) * 0.35
-                        + max(0.0, oil_portion * 100 - 35) * 2
-                    )
-                    if best_candidate is None or score < best_candidate[0]:
-                        best_candidate = score, candidate_plan
-
-            # En días muy altos en carbohidratos, combina una fuente densa con una cantidad
-            # limitada de miel. Así se mantiene la igualdad de macros sin inflar arroz/patata.
-            if "Miel" not in excluded:
-                honey_destination = next(
-                    ((meal, recipe) for meal, recipe, food in plan if food == "Miel"),
-                    (secondary_meal, secondary_recipe),
+            entries: dict[str, tuple[tuple[str, str], float, dict[str, float]]] = {}
+            for food, limit in portion_limits.items():
+                if food in excluded:
+                    continue
+                destination = destination_for(plan, food)
+                if destination is None:
+                    continue
+                meal_index = {
+                    "Desayuno": 0,
+                    "Media Mañana": 1,
+                    "Comida (Mediodía)": 2,
+                    "Merienda": 3,
+                    "Cena": 4,
+                }[destination[0]]
+                if (
+                    forbidden_foods_by_meal is not None
+                    and food in WEEKLY_ROTATION_FOODS
+                    and food in set(forbidden_foods_by_meal[meal_index])
+                ):
+                    continue
+                current_grams = sum(grams for (_, _, current_food), grams in plan.items() if current_food == food)
+                capacity = limit - current_grams
+                if capacity <= 1e-7:
+                    continue
+                entries[food] = (
+                    destination,
+                    capacity,
+                    {nutrient: float(FOOD_DATABASE[food][nutrient]) for nutrient in nutrients},
                 )
-                for dense_meal, dense_recipe, dense_food in carb_destinations:
-                    if dense_food == "Miel":
+            if "Aceite de oliva" not in entries:
+                continue
+
+            non_oil = [food for food in entries if food != "Aceite de oliva"]
+            pair_options = list(combinations(non_oil, 2))
+            booster_options: list[tuple[tuple[str, float], ...]] = [tuple()]
+            for booster in non_oil:
+                capacity = entries[booster][1]
+                booster_options.extend((((booster, capacity * 0.5),), ((booster, capacity),)))
+            booster_pool = [
+                food
+                for food in non_oil
+                if food in (
+                    "Tortitas de arroz", "Pan integral", "Avena seca", "Copos de maíz sin azúcar", "Miel",
+                    "Boniato al horno", "Pasta integral cocida", "Plátano", "Manzana", "Fresas",
+                )
+            ]
+            booster_options.extend(
+                ((first, entries[first][1]), (second, entries[second][1]))
+                for first, second in combinations(booster_pool, 2)
+            )
+
+            for fixed_boosters in booster_options:
+                adjusted_remaining = dict(remaining)
+                for booster, booster_grams in fixed_boosters:
+                    booster_vector = entries[booster][2]
+                    for nutrient in nutrients:
+                        adjusted_remaining[nutrient] -= booster_grams / 100 * booster_vector[nutrient]
+                if min(adjusted_remaining.values()) < -1e-7:
+                    continue
+                for first_food, second_food in pair_options:
+                    fixed_foods = {food for food, _ in fixed_boosters}
+                    if fixed_foods.intersection((first_food, second_food)):
                         continue
-                    dense_vector = {
-                        nutrient: float(FOOD_DATABASE[dense_food][nutrient])
-                        for nutrient in nutrients
-                    }
-                    honey_vector = {
-                        nutrient: float(FOOD_DATABASE["Miel"][nutrient])
-                        for nutrient in nutrients
-                    }
-                    solution = solve_macro_vectors((dense_vector, honey_vector, oil_vector), remaining)
-                    if solution is None:
+                    solution = solve_macro_vectors(
+                        (entries[first_food][2], entries[second_food][2], entries["Aceite de oliva"][2]),
+                        adjusted_remaining,
+                    )
+                    if solution is None or min(solution) < -1e-7:
                         continue
-                    dense_portion, honey_portion, oil_portion = solution
+                    first_grams, second_grams, oil_grams = (value * 100 for value in solution)
                     if (
-                        min(solution) < -1e-7
-                        or dense_portion * 100 > 450
-                        or honey_portion * 100 > 60
-                        or oil_portion * 100 > 60
+                        first_grams > entries[first_food][1] + 1e-7
+                        or second_grams > entries[second_food][1] + 1e-7
+                        or oil_grams > entries["Aceite de oliva"][1] + 1e-7
                     ):
                         continue
                     candidate_plan = dict(plan)
-                    add_food_portion(candidate_plan, dense_meal, dense_recipe, dense_food, dense_portion * 100)
-                    add_food_portion(
-                        candidate_plan,
-                        honey_destination[0],
-                        honey_destination[1],
-                        "Miel",
-                        honey_portion * 100,
-                    )
-                    add_food_portion(candidate_plan, "Comida (Mediodía)", lunch_recipe, "Aceite de oliva", oil_portion * 50)
-                    add_food_portion(candidate_plan, "Cena", dinner_recipe, "Aceite de oliva", oil_portion * 50)
+                    additions = [*fixed_boosters, (first_food, first_grams), (second_food, second_grams), ("Aceite de oliva", oil_grams)]
+                    for food, grams in additions:
+                        if grams <= 1e-7:
+                            continue
+                        meal, recipe = entries[food][0]
+                        add_food_portion(candidate_plan, meal, recipe, food, grams)
+                    try:
+                        validate_carb_rotation(candidate_plan)
+                    except ValueError:
+                        continue
+                    rice_cake_portions = [
+                        grams for (meal, _, food), grams in candidate_plan.items()
+                        if food == "Tortitas de arroz" and meal in ("Media Mañana", "Merienda")
+                    ]
+                    if any(grams > 60.0001 for grams in rice_cake_portions):
+                        continue
                     totals = plan_macros(candidate_plan)
                     if any(abs(totals[key] - nutrition[f"{key}_g"]) > 1e-4 for key in nutrients):
                         continue
                     score = (
                         abs(protein_grams - 150) * 2
-                        + abs(main_carb_grams - 300) * 0.65
-                        + max(0.0, dense_portion * 100 - 300) * 0.4
-                        + honey_portion * 100 * 0.7
-                        + max(0.0, oil_portion * 100 - 35) * 2
+                        + abs(main_carb_grams - 275) * 0.3
+                        + sum((grams / max(portion_limits.get(food, grams), 1)) ** 2 for food, grams in additions if food)
+                        + sum(grams * 0.06 for food, grams in additions if food == "Miel")
                     )
-                    if best_candidate is None or score < best_candidate[0]:
-                        best_candidate = score, candidate_plan
+                    return score, candidate_plan
     return best_candidate
 
 
@@ -1066,10 +1116,14 @@ def plan_rotation_signature(
         for meal in main_meals
     )
     snacks = tuple(
-        next(
-            recipe
-            for current_meal, recipe, _ in plan
-            if current_meal == meal
+        " | ".join(
+            sorted(
+                {
+                    recipe
+                    for current_meal, recipe, _ in plan
+                    if current_meal == meal
+                }
+            )
         )
         for meal in snack_meals
         if any(current_meal == meal for current_meal, _, _ in plan)
@@ -1111,6 +1165,7 @@ def build_dynamic_menu(
     preferred_breakfast_variant: str | None = None,
     previous_signature: tuple | None = None,
     forbidden_signatures: set[tuple] | None = None,
+    forbidden_main_recipes: set[str] | None = None,
 ) -> list[dict[str, float | str]]:
     """Construye recetas variadas y cierra exactamente los macros del día completo."""
     if meals_per_day not in (4, 5):
@@ -1163,9 +1218,18 @@ def build_dynamic_menu(
                 WEEKLY_ROTATION_FOODS
             ).intersection(previous_breakfast_foods)
         ]
-    shuffle(protein_pairs)
-    shuffle(carb_pairs)
-    shuffle(breakfast_variants)
+    protein_pairs.sort(
+        key=lambda pair: (
+            sum(food in set(previous_signature[1]) for food in pair) if previous_signature else 0,
+            sum(float(FOOD_DATABASE[food]["protein"]) for food in pair),
+        )
+    )
+    carb_pairs.sort(
+        key=lambda pair: sum(
+            float(FOOD_DATABASE[food]["protein"]) / max(float(FOOD_DATABASE[food]["carbs"]), 1e-9)
+            for food in pair
+        )
+    )
     for breakfast_variant in breakfast_variants:
         snack_orders = compatible_snack_orders(breakfast_variant, meals_per_day, excluded)
         if previous_signature is not None:
@@ -1181,7 +1245,6 @@ def build_dynamic_menu(
                     for position, variant in enumerate(order)
                 )
             ]
-        shuffle(snack_orders)
         for snack_variants in snack_orders:
             for lunch_protein, dinner_protein in protein_pairs:
                 for lunch_carb, dinner_carb in carb_pairs:
@@ -1195,6 +1258,7 @@ def build_dynamic_menu(
                         dinner_carb,
                         breakfast_variant,
                         snack_variants,
+                        previous_signature[4] if previous_signature is not None else None,
                     )
                     if candidate is not None:
                         try:
@@ -1202,18 +1266,25 @@ def build_dynamic_menu(
                         except ValueError:
                             continue
                         signature = plan_rotation_signature(candidate[1])
+                        main_recipes = {
+                            recipe
+                            for meal, recipe, _ in candidate[1]
+                            if meal in ("Comida (Mediodía)", "Cena")
+                        }
+                        if main_recipes.intersection(forbidden_main_recipes or set()):
+                            continue
                         if previous_signature is not None and not signatures_rotate(signature, previous_signature):
                             continue
                         if signature in (forbidden_signatures or set()):
                             continue
                         candidates.append(candidate)
-                        if len(candidates) >= 32:
+                        if len(candidates) >= 1:
                             break
-                if len(candidates) >= 32:
+                if len(candidates) >= 1:
                     break
-            if len(candidates) >= 32:
+            if len(candidates) >= 1:
                 break
-        if len(candidates) >= 32:
+        if len(candidates) >= 1:
             break
     if not candidates:
         raise ValueError("Las exclusiones actuales no permiten construir un menú completo con macros positivos.")
@@ -1250,6 +1321,8 @@ def build_weekly_menu(
     weekly_menus: dict[str, list[dict[str, float | str]]] = {}
     previous_signature = None
     used_signatures: set[tuple] = set()
+    main_recipe_counts: dict[str, int] = {}
+    main_recipe_last_day: dict[str, int] = {}
     excluded = set(excluded or set())
     if "Huevo entero" in excluded:
         excluded.add("Claras de huevo")
@@ -1264,10 +1337,29 @@ def build_weekly_menu(
             "Los macros y exclusiones actuales no dejan cuatro desayunos completos distintos para organizar la semana."
         )
     used_breakfasts: set[str] = set()
+    weekly_breakfast_order = (
+        "pancakes",
+        "toast_eggs",
+        "porridge",
+        "potato_scramble",
+        "yogurt_oats",
+        "rice_pudding",
+        "rice_cakes_yogurt",
+    )
     for index, day in enumerate(WEEKDAYS):
+        forbidden_main_recipes = {
+            recipe
+            for recipe, count in main_recipe_counts.items()
+            if count >= 2 or index - main_recipe_last_day[recipe] <= 2
+        }
+        preferred_breakfast = weekly_breakfast_order[index]
         ordered_breakfasts = sorted(
             breakfast_variants,
-            key=lambda variant: (variant in used_breakfasts, (breakfast_variants.index(variant) - index) % len(breakfast_variants)),
+            key=lambda variant: (
+                variant != preferred_breakfast,
+                variant in used_breakfasts,
+                breakfast_variants.index(variant),
+            ),
         )
         rows = None
         selected_variant = None
@@ -1280,6 +1372,7 @@ def build_weekly_menu(
                     preferred_breakfast_variant=variant,
                     previous_signature=previous_signature,
                     forbidden_signatures=used_signatures,
+                    forbidden_main_recipes=forbidden_main_recipes,
                 )
             except ValueError:
                 continue
@@ -1292,6 +1385,15 @@ def build_weekly_menu(
             )
         signature = menu_rows_signature(rows)
         weekly_menus[day] = rows
+        day_main_recipes = {
+            str(row["Receta"])
+            for row in rows
+            if row["Comida"] in ("Comida (Mediodía)", "Cena")
+            and row["Alimento"] in PROTEIN_OPTIONS
+        }
+        for recipe in day_main_recipes:
+            main_recipe_counts[recipe] = main_recipe_counts.get(recipe, 0) + 1
+            main_recipe_last_day[recipe] = index
         used_breakfasts.add(selected_variant)
         used_signatures.add(signature)
         previous_signature = signature
@@ -1436,6 +1538,7 @@ def render_workout_cards(
     exercises: list[dict[str, str | int]],
     multiplier: float,
     strength_data: dict[str, dict[str, float | int]],
+    goal: str,
 ) -> None:
     """Agrupa los ejercicios por sinergia y muestra tarjetas en dos columnas."""
     for block in ("Empuje", "Tirón", "Tren Inferior"):
@@ -1478,6 +1581,7 @@ def render_workout_cards(
                         f"Base: {exercise['sets']} series · "
                         f"Filtro de recuperación: {round(multiplier * 100)}%."
                     )
+                    st.info(f"⏱️ {REST_BY_GOAL.get(goal, REST_BY_GOAL['Hipertrofia'])}")
                 with media_column:
                     st.image(
                         exercise_image_url(str(exercise["name"])),
@@ -1504,20 +1608,32 @@ def render_smart_cardio(goal: str) -> None:
         )
 
 
-def render_daily_core(multiplier: float) -> None:
-    """Rota el trabajo de core con el día real y respeta el filtro de recuperación."""
+def current_core_plan(multiplier: float) -> dict[str, str | bool]:
+    """Devuelve el trabajo de core correspondiente al día actual."""
     weekday = WEEKDAYS[datetime.now().weekday()]
     exercise, prescription, instruction = CORE_BY_WEEKDAY[weekday]
+    return {
+        "weekday": weekday,
+        "exercise": exercise,
+        "prescription": prescription,
+        "instruction": instruction,
+        "omitted": multiplier <= 0.5,
+    }
+
+
+def render_daily_core(multiplier: float) -> None:
+    """Rota el trabajo de core con el día real y respeta el filtro de recuperación."""
+    core = current_core_plan(multiplier)
     st.divider()
     st.markdown("### 🔥 Core & Abdominales")
-    st.caption(f"Bloque rotativo de {weekday}, coordinado con el filtro anti-sobreentrenamiento.")
+    st.caption(f"Bloque rotativo de {core['weekday']}, coordinado con el filtro anti-sobreentrenamiento.")
     with st.container(border=True):
-        if multiplier <= 0.5:
+        if core["omitted"]:
             st.warning("Hoy se omite el bloque de core: el check-in indica descanso obligatorio.")
             return
-        st.markdown(f"#### {exercise}")
-        st.metric("Trabajo propuesto", prescription)
-        st.write(instruction)
+        st.markdown(f"#### {core['exercise']}")
+        st.metric("Trabajo propuesto", str(core["prescription"]))
+        st.write(str(core["instruction"]))
 
 
 def profile_details() -> None:
@@ -1897,6 +2013,210 @@ def weekly_plan_pdf(
     return buffer.getvalue()
 
 
+def training_plan_pdf(plan: dict) -> bytes:
+    """Compila la rutina elegida, cardio, core y descansos en un PDF independiente."""
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=14 * mm,
+        leftMargin=14 * mm,
+        topMargin=16 * mm,
+        bottomMargin=15 * mm,
+        title="Plan de entrenamiento SmartFit AI",
+        author="SmartFit AI",
+    )
+    stylesheet = getSampleStyleSheet()
+    charcoal = colors.HexColor("#151A1E")
+    lime = colors.HexColor("#9BCB20")
+    slate = colors.HexColor("#E9EDF0")
+    title_style = ParagraphStyle(
+        "TrainingTitle",
+        parent=stylesheet["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=21,
+        leading=25,
+        textColor=charcoal,
+        alignment=TA_CENTER,
+        spaceAfter=8,
+    )
+    heading_style = ParagraphStyle(
+        "TrainingHeading",
+        parent=stylesheet["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=15,
+        textColor=colors.HexColor("#50630B"),
+        spaceBefore=7,
+        spaceAfter=4,
+    )
+    body_style = ParagraphStyle(
+        "TrainingBody",
+        parent=stylesheet["BodyText"],
+        fontName="Helvetica",
+        fontSize=8,
+        leading=10,
+        textColor=charcoal,
+    )
+    small_style = ParagraphStyle("TrainingSmall", parent=body_style, fontSize=7, leading=9)
+    goal = str(plan.get("goal", "Hipertrofia"))
+    rest_text = REST_BY_GOAL.get(goal, REST_BY_GOAL["Hipertrofia"])
+    story = [
+        Paragraph("SMARTFIT AI", title_style),
+        Paragraph("Plan de entrenamiento de hoy", heading_style),
+        Paragraph(
+            f"Sesión: {escape(str(plan.get('division', 'Personalizada')))} | "
+            f"Objetivo: {escape(goal)} | Volumen aplicado: {round(float(plan['multiplier']) * 100)}%",
+            body_style,
+        ),
+        Spacer(1, 4 * mm),
+    ]
+    table_data: list[list[object]] = [["Ejercicio", "Equipo", "Series", "Reps", "Carga", "1RM"]]
+    rest_rows: list[int] = []
+    for exercise in plan["exercises"]:
+        name = str(exercise["name"])
+        strength = plan["strength_data"].get(name, {})
+        one_rm = float(strength.get("one_rm", 0))
+        load = suggested_weight(one_rm, float(plan["multiplier"])) if one_rm else 0.0
+        table_data.append(
+            [
+                Paragraph(escape(name), small_style),
+                Paragraph(escape(exercise_equipment_label(exercise)), small_style),
+                str(adjusted_sets(int(exercise["sets"]), float(plan["multiplier"]))),
+                escape(str(exercise["reps"])),
+                f"{load:.1f} kg" if load else "Pendiente",
+                f"{one_rm:.1f} kg" if one_rm else "Pendiente",
+            ]
+        )
+        rest_rows.append(len(table_data))
+        table_data.append([Paragraph(escape(rest_text), small_style), "", "", "", "", ""])
+    workout_table = Table(
+        table_data,
+        colWidths=[55 * mm, 37 * mm, 15 * mm, 20 * mm, 27 * mm, 27 * mm],
+        repeatRows=1,
+    )
+    table_commands = [
+        ("BACKGROUND", (0, 0), (-1, 0), charcoal),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#AEB7BD")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (2, 1), (-1, -1), "CENTER"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]
+    for row in rest_rows:
+        table_commands.extend(
+            [
+                ("SPAN", (0, row), (-1, row)),
+                ("BACKGROUND", (0, row), (-1, row), slate),
+                ("ALIGN", (0, row), (-1, row), "LEFT"),
+            ]
+        )
+    workout_table.setStyle(TableStyle(table_commands))
+    story.extend([workout_table, Spacer(1, 4 * mm)])
+
+    cardio = CARDIO_RECOMMENDATIONS.get(goal, CARDIO_RECOMMENDATIONS["Hipertrofia"])
+    story.extend(
+        [
+            Paragraph("Cardio inteligente", heading_style),
+            Paragraph(
+                f"{escape(str(cardio['title']))}: {escape(str(cardio['duration']))}. "
+                f"{escape(str(cardio['detail']))}",
+                body_style,
+            ),
+        ]
+    )
+    core = current_core_plan(float(plan["multiplier"]))
+    story.append(Paragraph("Core y abdominales", heading_style))
+    if core["omitted"]:
+        story.append(Paragraph("Bloque omitido por descanso obligatorio indicado en el check-in.", body_style))
+    else:
+        story.append(
+            Paragraph(
+                f"{escape(str(core['exercise']))}: {escape(str(core['prescription']))}. "
+                f"{escape(str(core['instruction']))}",
+                body_style,
+            )
+        )
+
+    def draw_page(canvas, doc) -> None:
+        canvas.saveState()
+        canvas.setStrokeColor(lime)
+        canvas.setLineWidth(1.3)
+        canvas.line(14 * mm, 11 * mm, 196 * mm, 11 * mm)
+        canvas.setFillColor(charcoal)
+        canvas.setFont("Helvetica", 7)
+        canvas.drawString(14 * mm, 7 * mm, "SmartFit AI - Entrenamiento")
+        canvas.drawRightString(196 * mm, 7 * mm, f"Página {doc.page}")
+        canvas.restoreState()
+
+    document.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def render_rest_timer() -> None:
+    """Muestra un temporizador de descanso en tiempo real sin bloquear Streamlit."""
+    st.divider()
+    st.markdown("### ⏱️ Temporizador de descanso")
+    seconds = st.selectbox(
+        "Selecciona el descanso",
+        [60, 90, 120, 180],
+        format_func=lambda value: f"{value} segundos",
+        key="rest_timer_seconds",
+    )
+    components.html(
+        f"""
+        <div class="timer-card">
+          <div id="timer-display">{seconds // 60:02d}:{seconds % 60:02d}</div>
+          <button id="timer-button" onclick="startTimer()">Iniciar cuenta atrás</button>
+          <div id="timer-finished" role="alert">¡Descanso completado! Empieza la siguiente serie.</div>
+        </div>
+        <style>
+          body {{ margin: 0; background: transparent; font-family: Montserrat, Arial, sans-serif; }}
+          .timer-card {{ padding: 20px; text-align: center; color: #fff; border-radius: 18px;
+            border: 1px solid rgba(217,255,50,.55); background: rgba(18,18,18,.55);
+            backdrop-filter: blur(8px); box-shadow: 0 14px 34px rgba(0,0,0,.34); }}
+          #timer-display {{ font-size: 54px; font-weight: 800; letter-spacing: .08em; color: #37f29b; }}
+          #timer-button {{ margin-top: 12px; padding: 13px 24px; border: 0; border-radius: 12px;
+            background: linear-gradient(135deg,#d9ff32,#37f29b); color:#07100b; font-weight:800;
+            cursor:pointer; transition: transform .18s ease, filter .18s ease; }}
+          #timer-button:hover {{ transform: translateY(-2px) scale(1.03); filter: brightness(1.08); }}
+          #timer-finished {{ display:none; margin-top:14px; padding:12px; border-radius:12px;
+            color:#07100b; background:#d9ff32; font-weight:800; }}
+          #timer-finished.done {{ display:block; animation:pulse 1s ease-in-out infinite alternate; }}
+          @keyframes pulse {{ from {{ transform:scale(1); box-shadow:0 0 0 rgba(217,255,50,0); }}
+            to {{ transform:scale(1.025); box-shadow:0 0 24px rgba(217,255,50,.65); }} }}
+        </style>
+        <script>
+          let intervalId = null;
+          function startTimer() {{
+            clearInterval(intervalId);
+            let remaining = {seconds};
+            const display = document.getElementById('timer-display');
+            const finished = document.getElementById('timer-finished');
+            const button = document.getElementById('timer-button');
+            finished.classList.remove('done'); button.textContent = 'Reiniciar cuenta atrás';
+            const paint = () => {{
+              const minutes = Math.floor(remaining / 60).toString().padStart(2,'0');
+              const secondsPart = (remaining % 60).toString().padStart(2,'0');
+              display.textContent = `${{minutes}}:${{secondsPart}}`;
+            }};
+            paint();
+            intervalId = setInterval(() => {{
+              remaining -= 1; paint();
+              if (remaining <= 0) {{ clearInterval(intervalId); finished.classList.add('done');
+                button.textContent = 'Iniciar de nuevo'; }}
+            }}, 1000);
+          }}
+        </script>
+        """,
+        height=265,
+    )
+
+
 def render_weekly_menu(plan: dict) -> None:
     """Muestra siete días, la compra consolidada y el PDF descargable."""
     weekly_menus = plan["weekly_menus"]
@@ -1964,13 +2284,28 @@ def render_daily_plan(plan: dict) -> None:
             st.warning("No se ha generado ningún plan de entrenamiento.")
         else:
             st.subheader(f"Sesión sugerida: {plan['division']}")
-            render_workout_cards(plan["exercises"], plan["multiplier"], plan["strength_data"])
+            render_workout_cards(
+                plan["exercises"],
+                plan["multiplier"],
+                plan["strength_data"],
+                plan.get("goal", "Hipertrofia"),
+            )
             st.caption(
                 f"Puntuación de fatiga: {plan['score']}. Las series base se multiplican por el filtro "
                 "de recuperación y se redondean hacia arriba."
             )
             render_daily_core(plan["multiplier"])
             render_smart_cardio(plan.get("goal", "Hipertrofia"))
+            st.download_button(
+                "📥 Descargar Plan de Entrenamiento en PDF",
+                data=training_plan_pdf(plan),
+                file_name="SmartFit_AI_Entrenamiento_Hoy.pdf",
+                mime="application/pdf",
+                type="primary",
+                width="stretch",
+                key="download_training_plan_pdf",
+            )
+            render_rest_timer()
 
     with diet_tab:
         st.subheader("Plan nutricional semanal dinámico")
@@ -2008,6 +2343,12 @@ def render_daily_plan(plan: dict) -> None:
 
 def checkin_page() -> None:
     st.header("2. Check-in diario")
+    st.info(
+        "💡 NOTA DE ASISTENCIA: En caso de que prefieras no consumir los datos de tu tarifa móvil o si "
+        "la cobertura dentro de la sala de tu gimnasio no es buena, puedes descargar tu Dieta Semanal y "
+        "tu Plan de Entrenamiento de hoy en formato PDF para tenerlos siempre a mano y utilizarlos sin "
+        "necesidad de conexión a internet."
+    )
     if "profile" not in st.session_state:
         st.info("Completa primero tu perfil para personalizar la sesión.")
         return
@@ -2800,8 +3141,9 @@ def apply_premium_styles() -> None:
                 border-radius: 16px;
                 margin-top: 0.45rem;
                 margin-bottom: 1rem;
-                backdrop-filter: blur(8px) !important;
-                -webkit-backdrop-filter: blur(8px) !important;
+                background-color: rgba(18, 18, 18, 0.48) !important;
+                backdrop-filter: blur(6px) !important;
+                -webkit-backdrop-filter: blur(6px) !important;
             }
             [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
                 transform: translateX(3px) translateY(-1px) scale(1.015);
