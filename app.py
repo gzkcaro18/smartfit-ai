@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+from datetime import datetime
 from html import escape
 from io import BytesIO
 from itertools import permutations
@@ -175,8 +176,8 @@ CARDIO_RECOMMENDATIONS = {
         "duration": "15-20 minutos",
         "title": "Caminata ligera en cinta",
         "detail": (
-            "Mantén un ritmo cómodo y sostenible. El objetivo es cuidar la salud cardiovascular "
-            "sin añadir una fatiga que interfiera con la ganancia de masa muscular."
+            "Velocidad: 5.0-5.5 km/h · Inclinación fija: 0%. Enfoque de salud cardiovascular "
+            "sin degradar masa muscular ni añadir fatiga innecesaria."
         ),
     },
     "Hipertrofia": {
@@ -191,10 +192,20 @@ CARDIO_RECOMMENDATIONS = {
         "duration": "30-40 minutos",
         "title": "Caminata en cinta con inclinación",
         "detail": (
-            "Utiliza una inclinación y velocidad que puedas sostener sin perder la técnica. "
-            "Aumenta el gasto energético mientras el entrenamiento de fuerza ayuda a proteger el músculo."
+            "Velocidad: 5.5-6.0 km/h · Inclinación obligatoria: 4%-6%. Enfoque de máxima "
+            "oxidación de grasa protegiendo las articulaciones y conservando el trabajo de fuerza."
         ),
     },
+}
+
+CORE_BY_WEEKDAY = {
+    "Lunes": ("Plancha isométrica", "3 x 45 s", "Aprieta glúteos y abdomen; mantén cabeza, cadera y talones alineados."),
+    "Martes": ("Dead bug controlado", "3 x 10 por lado", "Pega la zona lumbar al suelo y extiende brazo y pierna contrarios sin arquearla."),
+    "Miércoles": ("Crunch abdominal en suelo", "3 x 15", "Eleva solo las escápulas y exhala; evita tirar del cuello."),
+    "Jueves": ("Pallof press en polea", "3 x 12 por lado", "Resiste la rotación con el tronco firme y los brazos extendidos."),
+    "Viernes": ("Elevaciones de piernas colgado", "3 x 12", "Eleva las rodillas sin balanceo y controla por completo la bajada."),
+    "Sábado": ("Plancha lateral", "3 x 35 s por lado", "Mantén hombro, cadera y tobillo en línea sin dejar caer la pelvis."),
+    "Domingo": ("Bird dog", "2 x 10 por lado", "Extiende extremidades contrarias lentamente manteniendo la pelvis estable."),
 }
 
 # URLs directas de imágenes JPG, fijadas a una revisión inmutable del dataset.
@@ -242,6 +253,13 @@ FOOD_DATABASE = {
         "carbs": 0.0,
         "fat": 0.8,
         "fdc_id": 15121,
+        "category": "protein",
+    },
+    "Pavo cocido": {
+        "protein": 29.5,
+        "carbs": 0.0,
+        "fat": 2.1,
+        "fdc_id": 5696,
         "category": "protein",
     },
     "Pasta integral cocida": {
@@ -388,6 +406,9 @@ MAIN_RECIPE_CATALOG = {
     ("Atún al natural escurrido", "Arroz blanco cocido"): "Bowl fresco de arroz con atún",
     ("Atún al natural escurrido", "Pasta integral cocida"): "Ensalada de pasta integral con atún",
     ("Atún al natural escurrido", "Patata cocida"): "Ensalada templada de patata y atún",
+    ("Pavo cocido", "Arroz blanco cocido"): "Arroz salteado con pavo especiado",
+    ("Pavo cocido", "Pasta integral cocida"): "Pasta integral con pavo mediterráneo",
+    ("Pavo cocido", "Patata cocida"): "Pavo a la plancha con patatas al horno",
 }
 
 BREAKFAST_TEMPLATES = {
@@ -478,6 +499,18 @@ ROTATING_CARB_AND_FRUIT_FOODS = {
     *MAIN_CARB_OPTIONS,
 }
 
+# Alimentos que no pueden repetirse en la misma franja de dos días consecutivos.
+WEEKLY_ROTATION_FOODS = {
+    "Avena seca",
+    "Arroz blanco cocido",
+    "Patata cocida",
+    "Pan integral",
+    "Pasta integral cocida",
+    "Plátano",
+    "Manzana",
+    "Fresas",
+}
+
 FOOD_ALIASES = {
     "pollo": "Pechuga de pollo cocida",
     "pechuga": "Pechuga de pollo cocida",
@@ -486,6 +519,7 @@ FOOD_ALIASES = {
     "salmon": "Salmón cocido",
     "atún": "Atún al natural escurrido",
     "atun": "Atún al natural escurrido",
+    "pavo": "Pavo cocido",
     "arroz": "Arroz blanco cocido",
     "pasta": "Pasta integral cocida",
     "patata": "Patata cocida",
@@ -512,6 +546,7 @@ REPLACEMENTS = {
     "Ternera magra cocida": "Pechuga de pollo cocida",
     "Salmón cocido": "Atún al natural escurrido",
     "Atún al natural escurrido": "Pechuga de pollo cocida",
+    "Pavo cocido": "Pechuga de pollo cocida",
     "Arroz blanco cocido": "Patata cocida",
     "Pasta integral cocida": "Arroz blanco cocido",
     "Patata cocida": "Arroz blanco cocido",
@@ -768,7 +803,11 @@ def morning_base_plan(
                 destination[nutrient] += grams / 100 * float(FOOD_DATABASE[food][nutrient])
 
     morning_carb_budget = daily_carbs * (0.72 if high_carb_day else 0.55)
-    morning_protein_budget = daily_protein * (0.45 if meals_per_day == 5 else 0.38)
+    if high_carb_day:
+        # Deja margen proteico a las fuentes densas de carbohidrato de los snacks.
+        morning_protein_budget = daily_protein * (0.15 if meals_per_day == 5 else 0.12)
+    else:
+        morning_protein_budget = daily_protein * (0.45 if meals_per_day == 5 else 0.38)
     morning_fat_budget = daily_fat * (0.55 if meals_per_day == 5 else 0.50)
     morning_scale = min(
         1.0,
@@ -804,122 +843,170 @@ def build_recipe_candidate(
     breakfast_variant: str,
     snack_variants: tuple[str, ...],
 ) -> tuple[float, dict[tuple[str, str, str], float]] | None:
-    """Cierra los macros del día con dos platos principales de proteína única."""
+    """Cierra macros con porciones humanas y límites duros en los platos principales."""
     carb_protein_ratio = nutrition["carbs_g"] / max(nutrition["protein_g"], 1)
     high_carb_day = carb_protein_ratio > 3
-    very_high_carb_day = carb_protein_ratio > 5 and "Miel" not in excluded
     lunch_recipe = MAIN_RECIPE_CATALOG[(lunch_protein, lunch_carb)]
     dinner_recipe = MAIN_RECIPE_CATALOG[(dinner_protein, dinner_carb)]
     best_candidate: tuple[float, dict[tuple[str, str, str], float]] | None = None
-    for protein_grams in (150.0, 125.0, 100.0, 75.0, 50.0, 25.0):
-        plan = morning_base_plan(
-            meals_per_day,
-            excluded,
-            high_carb_day,
-            nutrition["carbs_g"],
-            nutrition["protein_g"],
-            nutrition["fat_g"],
-            breakfast_variant,
-            snack_variants,
-        )
-        add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_protein, protein_grams)
-        add_food_portion(plan, "Cena", dinner_recipe, dinner_protein, protein_grams)
-        if very_high_carb_day:
-            add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_carb, 150.0)
-            add_food_portion(plan, "Cena", dinner_recipe, dinner_carb, 150.0)
-
-        used = plan_macros(plan)
-        remaining = {
-            "protein": nutrition["protein_g"] - used["protein"],
-            "carbs": nutrition["carbs_g"] - used["carbs"],
-            "fat": nutrition["fat_g"] - used["fat"],
-        }
-        if min(remaining.values()) < -1e-7:
-            continue
-
-        egg_white_carb_ratio = (
-            float(FOOD_DATABASE["Claras de huevo"]["carbs"])
-            / float(FOOD_DATABASE["Claras de huevo"]["protein"])
-        )
-        remaining_carb_ratio = remaining["carbs"] / max(remaining["protein"], 1e-9)
-        if "Claras de huevo" not in excluded and remaining_carb_ratio >= egg_white_carb_ratio:
-            protein_corrector = "Claras de huevo"
-            corrector_meal = "Desayuno"
-            corrector_recipe = str(BREAKFAST_TEMPLATES[breakfast_variant]["recipe"])
-        else:
-            protein_corrector = lunch_protein
-            corrector_meal = "Comida (Mediodía)"
-            corrector_recipe = lunch_recipe
-
-        if very_high_carb_day:
-            carb_vector = {
-                nutrient: float(FOOD_DATABASE["Miel"][nutrient])
-                for nutrient in ("protein", "carbs", "fat")
-            }
-        else:
-            carb_vector = {
-                nutrient: (
-                    float(FOOD_DATABASE[lunch_carb][nutrient])
-                    + float(FOOD_DATABASE[dinner_carb][nutrient])
-                ) / 2
-                for nutrient in ("protein", "carbs", "fat")
-            }
-        corrector_vector = {
-            nutrient: float(FOOD_DATABASE[protein_corrector][nutrient])
-            for nutrient in ("protein", "carbs", "fat")
-        }
-        oil_vector = {
-            nutrient: float(FOOD_DATABASE["Aceite de oliva"][nutrient])
-            for nutrient in ("protein", "carbs", "fat")
-        }
-        solution = solve_macro_vectors((corrector_vector, carb_vector, oil_vector), remaining)
-        if solution is None:
-            continue
-        corrector_portion, carb_portion, oil_portion = solution
-        add_food_portion(plan, corrector_meal, corrector_recipe, protein_corrector, corrector_portion * 100)
-        if very_high_carb_day:
-            honey_destination = next(
-                (
-                    (meal, recipe)
-                    for meal, recipe, food in plan
-                    if food == "Miel"
-                ),
-                next(
-                    (meal, recipe)
-                    for meal, recipe, _ in plan
-                    if meal == "Merienda"
-                ),
+    nutrients = ("protein", "carbs", "fat")
+    oil_vector = {nutrient: float(FOOD_DATABASE["Aceite de oliva"][nutrient]) for nutrient in nutrients}
+    for protein_grams in (150.0, 165.0, 135.0, 180.0, 120.0):
+        for main_carb_grams in (250.0, 275.0, 300.0, 225.0, 200.0, 175.0, 150.0, 125.0, 100.0, 75.0, 50.0, 25.0):
+            plan = morning_base_plan(
+                meals_per_day,
+                excluded,
+                high_carb_day,
+                nutrition["carbs_g"],
+                nutrition["protein_g"],
+                nutrition["fat_g"],
+                breakfast_variant,
+                snack_variants,
             )
-            add_food_portion(
-                plan,
-                honey_destination[0],
-                honey_destination[1],
-                "Miel",
-                carb_portion * 100,
-            )
-        else:
-            add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_carb, carb_portion * 50)
-            add_food_portion(plan, "Cena", dinner_recipe, dinner_carb, carb_portion * 50)
-        add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, "Aceite de oliva", oil_portion * 50)
-        add_food_portion(plan, "Cena", dinner_recipe, "Aceite de oliva", oil_portion * 50)
+            add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_protein, protein_grams)
+            add_food_portion(plan, "Cena", dinner_recipe, dinner_protein, protein_grams)
+            add_food_portion(plan, "Comida (Mediodía)", lunch_recipe, lunch_carb, main_carb_grams)
+            add_food_portion(plan, "Cena", dinner_recipe, dinner_carb, main_carb_grams)
 
-        lunch_protein_grams = plan[("Comida (Mediodía)", lunch_recipe, lunch_protein)]
-        dinner_protein_grams = plan[("Cena", dinner_recipe, dinner_protein)]
-        portion_penalty = (
-            max(0.0, 100 - lunch_protein_grams)
-            + max(0.0, lunch_protein_grams - 175)
-            + max(0.0, 100 - dinner_protein_grams)
-            + max(0.0, dinner_protein_grams - 175)
-        ) * 4
-        score = (
-            abs(lunch_protein_grams - 137.5)
-            + abs(dinner_protein_grams - 137.5)
-            + portion_penalty
-            + max(0.0, corrector_portion * 100 - 250) * 0.6
-            + max(0.0, oil_portion * 100 - 35) * 2
-        )
-        if best_candidate is None or score < best_candidate[0]:
-            best_candidate = score, plan
+            used = plan_macros(plan)
+            remaining = {
+                "protein": nutrition["protein_g"] - used["protein"],
+                "carbs": nutrition["carbs_g"] - used["carbs"],
+                "fat": nutrition["fat_g"] - used["fat"],
+            }
+            if min(remaining.values()) < -1e-7:
+                continue
+
+            protein_correctors = [
+                food
+                for food in ("Claras de huevo", "Yogur griego natural 0%")
+                if food not in excluded
+            ]
+            dense_carbs = ("Tortitas de arroz", "Pan integral", "Avena seca", "Miel")
+            carb_destinations = [
+                (meal, recipe, food)
+                for meal, recipe, food in plan
+                if meal in ("Desayuno", "Media Mañana", "Merienda") and food in dense_carbs
+            ]
+            secondary_meal = "Media Mañana" if meals_per_day == 5 else "Merienda"
+            secondary_recipe = next(
+                recipe for meal, recipe, _ in plan if meal == secondary_meal
+            )
+            present_foods = {food for _, _, food in plan}
+            carb_destinations.extend(
+                (secondary_meal, secondary_recipe, food)
+                for food in dense_carbs
+                if food not in excluded and food not in present_foods
+            )
+            for protein_corrector in protein_correctors:
+                corrector_vector = {
+                    nutrient: float(FOOD_DATABASE[protein_corrector][nutrient])
+                    for nutrient in nutrients
+                }
+                for carb_meal, carb_recipe, carb_corrector in carb_destinations:
+                    carb_vector = {
+                        nutrient: float(FOOD_DATABASE[carb_corrector][nutrient])
+                        for nutrient in nutrients
+                    }
+                    solution = solve_macro_vectors((corrector_vector, carb_vector, oil_vector), remaining)
+                    if solution is None:
+                        continue
+                    corrector_portion, carb_portion, oil_portion = solution
+                    if min(solution) < -1e-7 or corrector_portion * 100 > 650 or oil_portion * 100 > 60:
+                        continue
+                    if carb_corrector == "Miel" and carb_portion * 100 > 60:
+                        continue
+
+                    candidate_plan = dict(plan)
+                    add_food_portion(
+                        candidate_plan,
+                        "Desayuno",
+                        str(BREAKFAST_TEMPLATES[breakfast_variant]["recipe"]),
+                        protein_corrector,
+                        corrector_portion * 100,
+                    )
+                    add_food_portion(
+                        candidate_plan,
+                        carb_meal,
+                        carb_recipe,
+                        carb_corrector,
+                        carb_portion * 100,
+                    )
+                    add_food_portion(candidate_plan, "Comida (Mediodía)", lunch_recipe, "Aceite de oliva", oil_portion * 50)
+                    add_food_portion(candidate_plan, "Cena", dinner_recipe, "Aceite de oliva", oil_portion * 50)
+
+                    totals = plan_macros(candidate_plan)
+                    if any(abs(totals[key] - nutrition[f"{key}_g"]) > 1e-4 for key in nutrients):
+                        continue
+                    lunch_protein_grams = candidate_plan[("Comida (Mediodía)", lunch_recipe, lunch_protein)]
+                    dinner_protein_grams = candidate_plan[("Cena", dinner_recipe, dinner_protein)]
+                    if not (120 <= lunch_protein_grams <= 180 and 120 <= dinner_protein_grams <= 180):
+                        continue
+                    if main_carb_grams > 300:
+                        continue
+                    score = (
+                        abs(lunch_protein_grams - 150)
+                        + abs(dinner_protein_grams - 150)
+                        + abs(main_carb_grams - 300) * 0.65
+                        + max(0.0, corrector_portion * 100 - 350) * 0.5
+                        + max(0.0, carb_portion * 100 - 250) * 0.35
+                        + max(0.0, oil_portion * 100 - 35) * 2
+                    )
+                    if best_candidate is None or score < best_candidate[0]:
+                        best_candidate = score, candidate_plan
+
+            # En días muy altos en carbohidratos, combina una fuente densa con una cantidad
+            # limitada de miel. Así se mantiene la igualdad de macros sin inflar arroz/patata.
+            if "Miel" not in excluded:
+                honey_destination = next(
+                    ((meal, recipe) for meal, recipe, food in plan if food == "Miel"),
+                    (secondary_meal, secondary_recipe),
+                )
+                for dense_meal, dense_recipe, dense_food in carb_destinations:
+                    if dense_food == "Miel":
+                        continue
+                    dense_vector = {
+                        nutrient: float(FOOD_DATABASE[dense_food][nutrient])
+                        for nutrient in nutrients
+                    }
+                    honey_vector = {
+                        nutrient: float(FOOD_DATABASE["Miel"][nutrient])
+                        for nutrient in nutrients
+                    }
+                    solution = solve_macro_vectors((dense_vector, honey_vector, oil_vector), remaining)
+                    if solution is None:
+                        continue
+                    dense_portion, honey_portion, oil_portion = solution
+                    if (
+                        min(solution) < -1e-7
+                        or dense_portion * 100 > 450
+                        or honey_portion * 100 > 60
+                        or oil_portion * 100 > 60
+                    ):
+                        continue
+                    candidate_plan = dict(plan)
+                    add_food_portion(candidate_plan, dense_meal, dense_recipe, dense_food, dense_portion * 100)
+                    add_food_portion(
+                        candidate_plan,
+                        honey_destination[0],
+                        honey_destination[1],
+                        "Miel",
+                        honey_portion * 100,
+                    )
+                    add_food_portion(candidate_plan, "Comida (Mediodía)", lunch_recipe, "Aceite de oliva", oil_portion * 50)
+                    add_food_portion(candidate_plan, "Cena", dinner_recipe, "Aceite de oliva", oil_portion * 50)
+                    totals = plan_macros(candidate_plan)
+                    if any(abs(totals[key] - nutrition[f"{key}_g"]) > 1e-4 for key in nutrients):
+                        continue
+                    score = (
+                        abs(protein_grams - 150) * 2
+                        + abs(main_carb_grams - 300) * 0.65
+                        + max(0.0, dense_portion * 100 - 300) * 0.4
+                        + honey_portion * 100 * 0.7
+                        + max(0.0, oil_portion * 100 - 35) * 2
+                    )
+                    if best_candidate is None or score < best_candidate[0]:
+                        best_candidate = score, candidate_plan
     return best_candidate
 
 
@@ -945,7 +1032,13 @@ def validate_carb_rotation(plan: dict[tuple[str, str, str], float]) -> None:
 
 def plan_rotation_signature(
     plan: dict[tuple[str, str, str], float],
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[tuple[str, ...], ...],
+]:
     """Resume las fuentes que deben cambiar entre días consecutivos."""
     main_meals = ("Comida (Mediodía)", "Cena")
     snack_meals = ("Media Mañana", "Merienda")
@@ -981,22 +1074,33 @@ def plan_rotation_signature(
         for meal in snack_meals
         if any(current_meal == meal for current_meal, _, _ in plan)
     )
-    return breakfasts, proteins, carbs, snacks
+    meal_rotation = tuple(
+        tuple(
+            sorted(
+                food
+                for current_meal, _, food in plan
+                if current_meal == meal and food in WEEKLY_ROTATION_FOODS
+            )
+        )
+        for meal in ("Desayuno", "Media Mañana", "Comida (Mediodía)", "Merienda", "Cena")
+    )
+    return breakfasts, proteins, carbs, snacks, meal_rotation
 
 
 def signatures_rotate(
-    current: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]],
-    previous: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+    current: tuple,
+    previous: tuple,
 ) -> bool:
-    """Exige que desayuno, platos principales y snacks roten al día siguiente."""
-    current_breakfast, current_proteins, current_carbs, current_snacks = current
-    previous_breakfast, previous_proteins, previous_carbs, previous_snacks = previous
+    """Exige recetas distintas y cero repetición de carb/fruta por franja consecutiva."""
+    current_breakfast, current_proteins, current_carbs, current_snacks, current_foods = current
+    previous_breakfast, previous_proteins, previous_carbs, previous_snacks, previous_foods = previous
     return (
         current_breakfast != previous_breakfast
         and all(current != old for current, old in zip(current_proteins, previous_proteins))
         and all(current != old for current, old in zip(current_carbs, previous_carbs))
         and len(current_snacks) == len(previous_snacks)
         and all(current != old for current, old in zip(current_snacks, previous_snacks))
+        and all(not set(now).intersection(before) for now, before in zip(current_foods, previous_foods))
     )
 
 
@@ -1005,10 +1109,8 @@ def build_dynamic_menu(
     excluded: set[str] | None = None,
     meals_per_day: int = 4,
     preferred_breakfast_variant: str | None = None,
-    previous_signature: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None,
-    forbidden_signatures: set[
-        tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]
-    ] | None = None,
+    previous_signature: tuple | None = None,
+    forbidden_signatures: set[tuple] | None = None,
 ) -> list[dict[str, float | str]]:
     """Construye recetas variadas y cierra exactamente los macros del día completo."""
     if meals_per_day not in (4, 5):
@@ -1024,6 +1126,17 @@ def build_dynamic_menu(
     candidates: list[tuple[float, dict[tuple[str, str, str], float]]] = []
     protein_pairs = [(first, second) for first in proteins for second in proteins if first != second]
     carb_pairs = [(first, second) for first in carbs for second in carbs if first != second]
+    if previous_signature is not None:
+        previous_proteins = previous_signature[1]
+        previous_carbs = previous_signature[2]
+        protein_pairs = [
+            pair for pair in protein_pairs
+            if pair[0] != previous_proteins[0] and pair[1] != previous_proteins[1]
+        ]
+        carb_pairs = [
+            pair for pair in carb_pairs
+            if pair[0] != previous_carbs[0] and pair[1] != previous_carbs[1]
+        ]
     if preferred_breakfast_variant is not None and preferred_breakfast_variant not in BREAKFAST_TEMPLATES:
         raise ValueError("La variante de desayuno solicitada no existe.")
     available_breakfasts = [
@@ -1040,11 +1153,34 @@ def build_dynamic_menu(
     )
     if not breakfast_variants:
         raise ValueError("No queda un desayuno completo compatible con las exclusiones actuales.")
+    if previous_signature is not None:
+        previous_breakfast_foods = set(previous_signature[4][0])
+        previous_breakfast_recipes = set(previous_signature[0])
+        breakfast_variants = [
+            variant for variant in breakfast_variants
+            if str(BREAKFAST_TEMPLATES[variant]["recipe"]) not in previous_breakfast_recipes
+            and not set(BREAKFAST_TEMPLATES[variant]["foods"]).intersection(
+                WEEKLY_ROTATION_FOODS
+            ).intersection(previous_breakfast_foods)
+        ]
     shuffle(protein_pairs)
     shuffle(carb_pairs)
     shuffle(breakfast_variants)
     for breakfast_variant in breakfast_variants:
         snack_orders = compatible_snack_orders(breakfast_variant, meals_per_day, excluded)
+        if previous_signature is not None:
+            previous_snacks = previous_signature[3]
+            meal_indexes = (1, 3) if meals_per_day == 5 else (3,)
+            snack_orders = [
+                order for order in snack_orders
+                if all(
+                    str(SNACK_TEMPLATES[variant]["recipe"]) != previous_snacks[position]
+                    and not set(SNACK_TEMPLATES[variant]["foods"]).intersection(
+                        WEEKLY_ROTATION_FOODS
+                    ).intersection(previous_signature[4][meal_indexes[position]])
+                    for position, variant in enumerate(order)
+                )
+            ]
         shuffle(snack_orders)
         for snack_variants in snack_orders:
             for lunch_protein, dinner_protein in protein_pairs:
@@ -1065,20 +1201,22 @@ def build_dynamic_menu(
                             validate_carb_rotation(candidate[1])
                         except ValueError:
                             continue
+                        signature = plan_rotation_signature(candidate[1])
+                        if previous_signature is not None and not signatures_rotate(signature, previous_signature):
+                            continue
+                        if signature in (forbidden_signatures or set()):
+                            continue
                         candidates.append(candidate)
+                        if len(candidates) >= 32:
+                            break
+                if len(candidates) >= 32:
+                    break
+            if len(candidates) >= 32:
+                break
+        if len(candidates) >= 32:
+            break
     if not candidates:
         raise ValueError("Las exclusiones actuales no permiten construir un menú completo con macros positivos.")
-
-    rotated_candidates = [
-        candidate
-        for candidate in candidates
-        if (previous_signature is None or signatures_rotate(plan_rotation_signature(candidate[1]), previous_signature))
-        and plan_rotation_signature(candidate[1]) not in (forbidden_signatures or set())
-    ]
-    if previous_signature is not None and not rotated_candidates:
-        raise ValueError("No existe una combinación que mantenga los macros y la rotación semanal solicitada.")
-    if rotated_candidates:
-        candidates = rotated_candidates
 
     candidates.sort(key=lambda candidate: candidate[0])
     best_pool = candidates[: min(4, len(candidates))]
@@ -1094,7 +1232,7 @@ def build_dynamic_menu(
 
 def menu_rows_signature(
     rows: list[dict[str, float | str]],
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+) -> tuple:
     """Obtiene la firma semanal a partir de las filas visibles del menú."""
     plan = {
         (str(row["Comida"]), str(row["Receta"]), str(row["Alimento"])): float(row["Gramos"])
@@ -1111,9 +1249,7 @@ def build_weekly_menu(
     """Genera siete menús exactos, únicos y rotados respecto al día anterior."""
     weekly_menus: dict[str, list[dict[str, float | str]]] = {}
     previous_signature = None
-    used_signatures: set[
-        tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]
-    ] = set()
+    used_signatures: set[tuple] = set()
     excluded = set(excluded or set())
     if "Huevo entero" in excluded:
         excluded.add("Claras de huevo")
@@ -1122,37 +1258,49 @@ def build_weekly_menu(
         for variant, template in BREAKFAST_TEMPLATES.items()
         if not set(template["foods"]).intersection(excluded)
     ]
-    breakfast_variants = []
-    for variant in available_breakfasts:
-        try:
-            build_dynamic_menu(
-                nutrition,
-                excluded,
-                meals_per_day,
-                preferred_breakfast_variant=variant,
-            )
-        except ValueError:
-            continue
-        breakfast_variants.append(variant)
-        if len(breakfast_variants) == 4:
-            break
+    breakfast_variants = list(available_breakfasts)
     if len(breakfast_variants) < 4:
         raise ValueError(
             "Los macros y exclusiones actuales no dejan cuatro desayunos completos distintos para organizar la semana."
         )
+    used_breakfasts: set[str] = set()
     for index, day in enumerate(WEEKDAYS):
-        rows = build_dynamic_menu(
-            nutrition,
-            excluded,
-            meals_per_day,
-            preferred_breakfast_variant=breakfast_variants[index % len(breakfast_variants)],
-            previous_signature=previous_signature,
-            forbidden_signatures=used_signatures,
+        ordered_breakfasts = sorted(
+            breakfast_variants,
+            key=lambda variant: (variant in used_breakfasts, (breakfast_variants.index(variant) - index) % len(breakfast_variants)),
         )
+        rows = None
+        selected_variant = None
+        for variant in ordered_breakfasts:
+            try:
+                candidate_rows = build_dynamic_menu(
+                    nutrition,
+                    excluded,
+                    meals_per_day,
+                    preferred_breakfast_variant=variant,
+                    previous_signature=previous_signature,
+                    forbidden_signatures=used_signatures,
+                )
+            except ValueError:
+                continue
+            rows = candidate_rows
+            selected_variant = variant
+            break
+        if rows is None or selected_variant is None:
+            raise ValueError(
+                f"No se pudo construir {day} sin repetir carbohidratos o fruta en la misma franja."
+            )
         signature = menu_rows_signature(rows)
         weekly_menus[day] = rows
+        used_breakfasts.add(selected_variant)
         used_signatures.add(signature)
         previous_signature = signature
+    breakfast_names = {
+        str(next(row["Receta"] for row in rows if row["Comida"] == "Desayuno"))
+        for rows in weekly_menus.values()
+    }
+    if len(breakfast_names) < 4:
+        raise ValueError("El plan semanal necesita al menos cuatro desayunos diferentes.")
     return weekly_menus
 
 
@@ -1354,6 +1502,22 @@ def render_smart_cardio(goal: str) -> None:
             "La propuesta es orientativa: reduce la intensidad o detente si aparece dolor, mareo "
             "o una sensación anormal."
         )
+
+
+def render_daily_core(multiplier: float) -> None:
+    """Rota el trabajo de core con el día real y respeta el filtro de recuperación."""
+    weekday = WEEKDAYS[datetime.now().weekday()]
+    exercise, prescription, instruction = CORE_BY_WEEKDAY[weekday]
+    st.divider()
+    st.markdown("### 🔥 Core & Abdominales")
+    st.caption(f"Bloque rotativo de {weekday}, coordinado con el filtro anti-sobreentrenamiento.")
+    with st.container(border=True):
+        if multiplier <= 0.5:
+            st.warning("Hoy se omite el bloque de core: el check-in indica descanso obligatorio.")
+            return
+        st.markdown(f"#### {exercise}")
+        st.metric("Trabajo propuesto", prescription)
+        st.write(instruction)
 
 
 def profile_details() -> None:
@@ -1647,7 +1811,7 @@ def weekly_plan_pdf(
             if not meal_rows:
                 continue
             recipes = " + ".join(dict.fromkeys(str(row["Receta"]) for row in meal_rows))
-            story.append(Paragraph(f"{escape(meal)} — {escape(recipes)}", meal_style))
+            story.append(Paragraph(f"{escape(meal)} - {escape(recipes)}", meal_style))
             table_data = [["Alimento", "g", "P", "C", "G"]]
             table_data.extend(
                 [
@@ -1724,7 +1888,7 @@ def weekly_plan_pdf(
         canvas.line(14 * mm, 11 * mm, 196 * mm, 11 * mm)
         canvas.setFillColor(charcoal)
         canvas.setFont("Helvetica", 7)
-        canvas.drawString(14 * mm, 7 * mm, "SmartFit AI · Plan semanal")
+        canvas.drawString(14 * mm, 7 * mm, "SmartFit AI - Plan semanal")
         canvas.drawRightString(196 * mm, 7 * mm, f"Página {doc.page}")
         canvas.restoreState()
 
@@ -1805,6 +1969,7 @@ def render_daily_plan(plan: dict) -> None:
                 f"Puntuación de fatiga: {plan['score']}. Las series base se multiplican por el filtro "
                 "de recuperación y se redondean hacia arriba."
             )
+            render_daily_core(plan["multiplier"])
             render_smart_cardio(plan.get("goal", "Hipertrofia"))
 
     with diet_tab:
@@ -2018,6 +2183,8 @@ def apply_premium_styles() -> None:
     st.markdown(
         """
         <style>
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Oswald:wght@500;600;700&display=swap');
+
         :root {
             --gym-bg: #080b0d;
             --gym-panel: #11161a;
@@ -2032,33 +2199,66 @@ def apply_premium_styles() -> None:
         .stApp {
             background-color: #07090b;
             background-image:
+                radial-gradient(ellipse at center, rgba(4, 7, 9, 0.10) 0%, rgba(3, 5, 7, 0.35) 58%, rgba(0, 0, 0, 0.78) 100%),
                 radial-gradient(circle at 92% 5%, rgba(217, 255, 50, 0.12), transparent 26rem),
                 radial-gradient(circle at 5% 78%, rgba(255, 122, 24, 0.10), transparent 30rem),
-                linear-gradient(135deg, rgba(4, 7, 9, 0.62), rgba(6, 9, 11, 0.50) 48%, rgba(3, 5, 7, 0.66)),
                 url("https://images.unsplash.com/photo-1778828450059-f39d5bbb01af?auto=format&fit=crop&w=2400&q=85");
-            background-size: auto, auto, cover, cover;
+            background-size: cover, auto, auto, cover;
             background-position: center, center, center, center;
             background-repeat: no-repeat;
             background-attachment: fixed;
             color: var(--gym-text);
             min-height: 100vh;
+            font-family: 'Montserrat', system-ui, -apple-system, sans-serif;
+        }
+
+        .smartfit-title {
+            margin: 0 0 0.2rem;
+            color: #ffffff !important;
+            font-family: 'Oswald', 'Arial Narrow', sans-serif !important;
+            font-size: clamp(2.7rem, 7vw, 5.2rem);
+            font-weight: 700;
+            line-height: 1;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            text-shadow: 0 2px 0 rgba(255,255,255,0.10), 0 0 18px rgba(55,242,155,0.20);
         }
 
         [data-testid="stAppViewContainer"],
-        [data-testid="stMain"] {
-            background: transparent !important;
+        [data-testid="stMain"],
+        .stMain {
+            background-color: transparent !important;
+            background-image: none !important;
         }
 
-        [data-testid="stMainBlockContainer"] {
-            background-color: rgba(18, 18, 18, 0.65) !important;
+        /* Una única lámina de cristal base: evita que varias capas translúcidas se vuelvan negras. */
+        [data-testid="stMainBlockContainer"],
+        .block-container {
+            background-color: rgba(18, 18, 18, 0.55) !important;
             background-image: none !important;
             border: 1px solid rgba(217, 255, 50, 0.14);
             border-radius: 24px;
             box-shadow: 0 26px 70px rgba(0, 0, 0, 0.48);
-            backdrop-filter: blur(10px) !important;
-            -webkit-backdrop-filter: blur(10px) !important;
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
             margin-top: 1rem;
             margin-bottom: 2rem;
+        }
+
+        /* Las envolventes anidadas permanecen transparentes: el cristal visible vive en la base,
+           las tarjetas y los controles, evitando la antigua pared negra por capas acumuladas. */
+        .stTabs,
+        .stTabs > div,
+        div[data-baseweb="tab-panel"] {
+            background-color: transparent !important;
+            background-image: none !important;
+            box-shadow: none !important;
+        }
+
+        div[data-baseweb="tab-panel"] {
+            border: 0 !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
         }
 
         .stApp p,
@@ -2075,16 +2275,19 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stHeader"] {
-            background: rgba(6, 9, 11, 0.88);
+            background-color: rgba(18, 18, 18, 0.55) !important;
             border-bottom: 1px solid rgba(217, 255, 50, 0.10);
-            backdrop-filter: blur(16px);
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
         }
 
         [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, rgba(13, 17, 20, 0.98), rgba(7, 10, 12, 0.98));
+            background-color: rgba(18, 18, 18, 0.55) !important;
+            background-image: none !important;
             border-right: 1px solid rgba(217, 255, 50, 0.38);
             box-shadow: 18px 0 45px rgba(0, 0, 0, 0.38);
-            backdrop-filter: blur(18px);
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
         }
 
         [data-testid="stSidebar"] p,
@@ -2291,10 +2494,10 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stVerticalBlockBorderWrapper"] {
-            background-color: rgba(18, 18, 18, 0.65) !important;
+            background-color: rgba(18, 18, 18, 0.55) !important;
             background-image: none !important;
-            backdrop-filter: blur(10px) !important;
-            -webkit-backdrop-filter: blur(10px) !important;
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
             border: 1px solid rgba(217, 255, 50, 0.42) !important;
             border-left: 3px solid var(--gym-lime) !important;
             border-radius: 18px !important;
@@ -2315,9 +2518,9 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stExpander"] {
-            background-color: rgba(18, 18, 18, 0.65) !important;
-            backdrop-filter: blur(10px) !important;
-            -webkit-backdrop-filter: blur(10px) !important;
+            background-color: rgba(18, 18, 18, 0.55) !important;
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
             border: 1px solid #596970 !important;
             border-radius: 14px !important;
             overflow: hidden;
@@ -2339,9 +2542,9 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stMetric"] {
-            background-color: rgba(18, 18, 18, 0.65) !important;
-            backdrop-filter: blur(10px) !important;
-            -webkit-backdrop-filter: blur(10px) !important;
+            background-color: rgba(18, 18, 18, 0.55) !important;
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
             border: 1px solid rgba(55, 242, 155, 0.34);
             border-radius: 14px;
             padding: 0.85rem 1rem;
@@ -2358,18 +2561,21 @@ def apply_premium_styles() -> None:
         [data-testid="stMetricValue"] {
             color: var(--gym-green);
             font-weight: 800;
+            font-family: 'Oswald', 'Arial Narrow', sans-serif !important;
+            letter-spacing: 0.035em;
         }
 
         [data-testid="stMetricLabel"] p {
             color: #ffffff !important;
             font-weight: 700;
+            font-family: 'Montserrat', system-ui, sans-serif !important;
         }
 
         .stTabs [data-baseweb="tab-list"] {
             gap: 0.45rem;
-            background-color: rgba(18, 18, 18, 0.65) !important;
-            backdrop-filter: blur(10px) !important;
-            -webkit-backdrop-filter: blur(10px) !important;
+            background-color: rgba(18, 18, 18, 0.55) !important;
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 14px;
             padding: 0.35rem;
@@ -2479,9 +2685,9 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stChatMessage"] {
-            background-color: rgba(18, 18, 18, 0.65) !important;
-            backdrop-filter: blur(10px) !important;
-            -webkit-backdrop-filter: blur(10px) !important;
+            background-color: rgba(18, 18, 18, 0.55) !important;
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
             border: 1px solid rgba(55, 242, 155, 0.34);
             border-radius: 16px;
             box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
@@ -2552,9 +2758,9 @@ def apply_premium_styles() -> None:
         }
 
         [data-testid="stDataFrame"] {
-            background-color: rgba(18, 18, 18, 0.65) !important;
-            backdrop-filter: blur(10px) !important;
-            -webkit-backdrop-filter: blur(10px) !important;
+            background-color: rgba(18, 18, 18, 0.55) !important;
+            backdrop-filter: blur(8px) !important;
+            -webkit-backdrop-filter: blur(8px) !important;
             border: 1px solid rgba(217, 255, 50, 0.32);
             border-radius: 12px;
             overflow: hidden;
@@ -2569,11 +2775,11 @@ def apply_premium_styles() -> None:
         }
 
         th {
-            background: #1a2328 !important;
+            background-color: rgba(18, 18, 18, 0.72) !important;
         }
 
         td {
-            background: #11181c !important;
+            background-color: rgba(18, 18, 18, 0.55) !important;
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -2594,8 +2800,8 @@ def apply_premium_styles() -> None:
                 border-radius: 16px;
                 margin-top: 0.45rem;
                 margin-bottom: 1rem;
-                backdrop-filter: blur(8px);
-                -webkit-backdrop-filter: blur(8px);
+                backdrop-filter: blur(8px) !important;
+                -webkit-backdrop-filter: blur(8px) !important;
             }
             [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
                 transform: translateX(3px) translateY(-1px) scale(1.015);
@@ -2664,7 +2870,7 @@ def main() -> None:
     )
     apply_premium_styles()
     require_password()
-    st.title("💪 SmartFit AI")
+    st.markdown('<h1 class="smartfit-title">SMARTFIT AI</h1>', unsafe_allow_html=True)
     st.caption("Entrena lo necesario. Progresa de verdad. Sin APIs de pago.")
     st.error(
         "¡ATENCIÓN! Si tienes alergias alimentarias, intolerancias o hay algún alimento que no te guste, "
