@@ -9,7 +9,9 @@ from io import BytesIO
 from itertools import combinations, permutations
 from math import ceil
 from random import choice, shuffle
+import re
 import time
+import unicodedata
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -675,6 +677,198 @@ def tutor_response(message: str) -> tuple[str, str | None]:
     return (
         f"He identificado {food}. Si quieres eliminarlo, indica “alérgico a {food}” o “no me gusta {food}”.",
         None,
+    )
+
+
+def normalize_search_text(value: str) -> str:
+    """Normaliza texto libre para localizar días, comidas y recetas sin depender de tildes."""
+    normalized = unicodedata.normalize("NFKD", value.lower())
+    return "".join(character for character in normalized if not unicodedata.combining(character))
+
+
+def is_cooking_request(message: str) -> bool:
+    """Detecta peticiones culinarias explícitas sin confundirlas con exclusiones alimentarias."""
+    text = normalize_search_text(message)
+    cooking_terms = (
+        "como preparo",
+        "como preparar",
+        "como cocino",
+        "como cocinar",
+        "como se hace",
+        "como hago",
+        "dame la receta",
+        "receta",
+        "receta paso a paso",
+        "paso a paso",
+        "quiero preparar",
+        "quiero cocinar",
+        "hacer un batido",
+        "preparar un batido",
+    )
+    return any(term in text for term in cooking_terms)
+
+
+def locate_recipe_in_plan(
+    message: str,
+    plan: dict,
+) -> tuple[str, str, str, list[dict[str, float | str]]] | None:
+    """Localiza la comida del menú activo que mejor coincide con la consulta del usuario."""
+    text = normalize_search_text(message)
+    weekly_menus = plan.get("weekly_menus", {})
+    selected_day = next(
+        (day for day in WEEKDAYS if normalize_search_text(day) in text),
+        "Lunes",
+    )
+    rows = weekly_menus.get(selected_day) or plan.get("menu_rows", [])
+    grouped: dict[tuple[str, str], list[dict[str, float | str]]] = {}
+    for row in rows:
+        key = (str(row["Comida"]), str(row["Receta"]))
+        grouped.setdefault(key, []).append(row)
+
+    meal_aliases = {
+        "Desayuno": ("desayuno",),
+        "Media Mañana": ("media manana", "media mañana"),
+        "Comida (Mediodía)": ("comida", "mediodia", "almuerzo"),
+        "Merienda": ("merienda", "snack"),
+        "Cena": ("cena",),
+    }
+    scored: list[tuple[int, str, str, list[dict[str, float | str]]]] = []
+    for (meal, recipe), meal_rows in grouped.items():
+        recipe_text = normalize_search_text(recipe)
+        score = 0
+        if recipe_text in text:
+            score += 100
+        score += sum(12 for alias in meal_aliases.get(meal, ()) if normalize_search_text(alias) in text)
+        for token in set(recipe_text.split()):
+            if len(token) >= 4 and token in text:
+                score += 4
+        for row in meal_rows:
+            food_text = normalize_search_text(str(row["Alimento"]))
+            if food_text in text:
+                score += 25
+            score += sum(
+                8
+                for token in set(food_text.split())
+                if len(token) >= 4 and token in text
+            )
+        foods = {str(row["Alimento"]) for row in meal_rows}
+        if "batido" in text and "Leche semidesnatada" in foods and foods.intersection({"Plátano", "Fresas", "Manzana"}):
+            score += 40
+        scored.append((score, meal, recipe, meal_rows))
+
+    if not scored:
+        return None
+    score, meal, recipe, meal_rows = max(scored, key=lambda item: item[0])
+    if score <= 0:
+        return None
+    return selected_day, meal, recipe, meal_rows
+
+
+def cooking_steps(recipe: str, rows: list[dict[str, float | str]], as_shake: bool) -> list[str]:
+    """Crea instrucciones culinarias deterministas usando solo los alimentos del plato calculado."""
+    foods = {str(row["Alimento"]) for row in rows}
+    recipe_text = normalize_search_text(recipe)
+    if as_shake:
+        return [
+            "Pesa por separado cada ingrediente con las cantidades indicadas.",
+            "Añade primero la leche al vaso de la batidora y después incorpora la fruta y el resto de ingredientes del plato.",
+            "Tritura durante 30-45 segundos hasta obtener una textura uniforme; añade únicamente agua o hielo si necesitas aligerarlo.",
+            "Sirve inmediatamente y consume toda la preparación para respetar los macros calculados.",
+        ]
+    if "tortitas" in recipe_text and "Avena seca" in foods:
+        return [
+            "Pesa todos los ingredientes antes de empezar y reserva cualquier topping para el final.",
+            "Tritura la avena con el huevo, la leche y la fruta que aparezcan en tu ración hasta obtener una masa homogénea.",
+            "Calienta una sartén antiadherente a fuego medio; no añadas aceite salvo que figure expresamente en los ingredientes.",
+            "Vierte pequeñas porciones y cocina cada tortita 1-2 minutos por lado, hasta que quede firme y dorada.",
+            "Sirve todas las tortitas y reparte por encima los toppings calculados sin añadir cantidades extra.",
+        ]
+    if "porridge" in recipe_text or ("Avena seca" in foods and "Leche semidesnatada" in foods):
+        return [
+            "Pesa la avena, la leche, la fruta y los toppings exactamente como aparecen en el menú.",
+            "Calienta la leche a fuego medio sin dejar que hierva.",
+            "Incorpora la avena y remueve durante 4-6 minutos hasta conseguir una textura cremosa.",
+            "Retira del fuego, añade la fruta troceada y termina con los toppings calculados.",
+        ]
+    if "Yogur griego natural 0%" in foods:
+        return [
+            "Pesa el yogur y cada acompañamiento en recipientes separados.",
+            "Coloca el yogur como base del bol y añade la fruta limpia y troceada.",
+            "Incorpora la avena, las tortitas o los frutos secos que correspondan a la ración.",
+            "Mezcla justo antes de comer para conservar la textura, sin añadir toppings fuera del menú.",
+        ]
+    if "Pan integral" in foods and foods.intersection({"Huevo entero", "Claras de huevo"}):
+        return [
+            "Pesa el pan, el huevo y las claras según las cantidades del menú.",
+            "Tuesta el pan sin añadir mantequilla ni aceite adicional.",
+            "Bate el huevo y las claras y cocínalos en una sartén antiadherente a fuego medio, removiendo hasta que cuajen.",
+            "Sirve el revuelto sobre las tostadas y consume la ración completa.",
+        ]
+
+    protein = next((food for food in foods if food in PROTEIN_OPTIONS), None)
+    carbohydrate = next((food for food in foods if food in MAIN_CARB_OPTIONS), None)
+    oil_present = "Aceite de oliva" in foods
+    steps = ["Pesa todos los ingredientes ya cocinados o escurridos según indique el menú."]
+    if protein:
+        steps.append(
+            f"Calienta o termina {protein.lower()} a fuego medio hasta que esté bien caliente; "
+            f"{'utiliza únicamente el aceite asignado' if oil_present else 'no añadas aceite extra'} y sazona al gusto."
+        )
+    if carbohydrate:
+        steps.append(
+            f"Calienta {carbohydrate.lower()} por separado para mantener la cantidad exacta y evitar que absorba grasas adicionales."
+        )
+    steps.extend(
+        [
+            "Combina los componentes en el plato respetando todas las cantidades calculadas.",
+            "Sirve inmediatamente y no añadas salsas o toppings calóricos que no aparezcan en la receta.",
+        ]
+    )
+    return steps
+
+
+def build_cooking_response(message: str, plan: dict | None) -> str:
+    """Genera una receta paso a paso enlazada al menú y a los macros del perfil activo."""
+    if not plan:
+        return (
+            "Para darte una receta con cantidades y macros exactos, completa primero el Perfil y el Check-in diario. "
+            "Después pregúntame cómo preparar cualquiera de los platos de tu menú semanal."
+        )
+    match = locate_recipe_in_plan(message, plan)
+    if not match:
+        monday_rows = plan.get("weekly_menus", {}).get("Lunes", plan.get("menu_rows", []))
+        available = list(dict.fromkeys(str(row["Receta"]) for row in monday_rows))
+        options = ", ".join(available[:5])
+        return (
+            "Dime qué plato o momento del día quieres preparar. Por ejemplo: “¿Cómo preparo mi desayuno?” "
+            f"o escribe uno de estos platos del lunes: {options}."
+        )
+
+    day, meal, recipe, rows = match
+    protein = sum(float(row["Proteína (g)"]) for row in rows)
+    carbs = sum(float(row["Carbohidratos (g)"]) for row in rows)
+    fat = sum(float(row["Grasas (g)"]) for row in rows)
+    calories = round(protein * 4 + carbs * 4 + fat * 9)
+    nutrition = plan["nutrition"]
+    ingredients = "\n".join(
+        f"- **{row['Alimento']}:** {float(row['Gramos']):.1f} g ({row['Medida práctica']})"
+        for row in rows
+    )
+    as_shake = "batido" in normalize_search_text(message)
+    steps = "\n".join(
+        f"{index}. {instruction}"
+        for index, instruction in enumerate(cooking_steps(recipe, rows, as_shake), start=1)
+    )
+    display_name = f"Batido adaptado de {recipe.lower()}" if as_shake else recipe
+    return (
+        f"### 🍳 {display_name}\n"
+        f"**{day} · {meal}**\n\n"
+        f"**Ingredientes exactos de tu menú**\n{ingredients}\n\n"
+        f"**Macros de esta ración:** {calories} kcal · P {protein:.1f} g · C {carbs:.1f} g · G {fat:.1f} g.\n\n"
+        f"**Preparación paso a paso**\n{steps}\n\n"
+        f"Estas cantidades forman parte de tu objetivo diario calculado de **{nutrition['calories']} kcal** "
+        f"(metabolismo basal estimado: **{nutrition['bmr']} kcal**). "
+        "No añadas ingredientes calóricos adicionales si quieres conservar los macros del plan."
     )
 
 
@@ -2458,16 +2652,26 @@ def checkin_page() -> None:
 def tutor_page(embedded: bool = False) -> None:
     """Chat local para exclusiones alimentarias; no usa llamadas a modelos de IA."""
     if embedded:
-        st.markdown("#### 💬 Tutor IA de nutrición y alergias")
-        st.caption("Asistente integrado: escribe una alergia o preferencia para ajustar el menú activo.")
+        st.markdown("## ¡Cocina Conmigo!")
+        st.markdown(
+            "En este apartado puedes poner qué parte de tu dieta no sabes cómo preparar y el Tutor IA "
+            "se encargará de darte la receta paso a paso con todo lo que tienes que hacer."
+        )
+        st.caption("También puedes indicar una alergia, intolerancia o alimento que no te guste para ajustar el menú activo.")
     else:
-        st.header("3. Tutor de nutrición y alergias")
-        st.caption("Tutor local basado en reglas. Puede excluir alimentos y recalcular el menú activo.")
+        st.header("¡Cocina Conmigo!")
+        st.markdown(
+            "En este apartado puedes poner qué parte de tu dieta no sabes cómo preparar y el Tutor IA "
+            "se encargará de darte la receta paso a paso con todo lo que tienes que hacer."
+        )
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [
             {
                 "role": "assistant",
-                "content": "Hola. Cuéntame si tienes una alergia o un alimento que no te guste y ajustaré el menú del día.",
+                "content": (
+                    "Hola. Pregúntame cómo preparar cualquier plato de tu menú y te daré los ingredientes exactos, "
+                    "sus macros y los pasos. También puedo gestionar alergias o alimentos que no te gusten."
+                ),
             }
         ]
     if "excluded_foods" not in st.session_state:
@@ -2541,16 +2745,22 @@ def tutor_page(embedded: bool = False) -> None:
         unsafe_allow_html=True,
     )
 
-    prompt = st.chat_input("Ej.: “Soy alérgico al atún” o “No me gusta el salmón”")
+    prompt = st.chat_input("Ej.: “¿Cómo preparo mi desayuno?” o “No me gusta el salmón”")
     if prompt:
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar="👤"):
             st.write(prompt)
 
-        with st.spinner("Analizando perfil y alérgenos..."):
+        cooking_request = is_cooking_request(prompt)
+        spinner_text = "Preparando tu receta con los gramos y macros exactos..." if cooking_request else "Analizando perfil y alérgenos..."
+        with st.spinner(spinner_text):
             time.sleep(3)
-            answer, food_to_exclude = tutor_response(prompt)
             plan = st.session_state.get("daily_plan")
+            if cooking_request:
+                answer = build_cooking_response(prompt, plan)
+                food_to_exclude = None
+            else:
+                answer, food_to_exclude = tutor_response(prompt)
             if food_to_exclude and food_to_exclude in FOOD_DATABASE and plan:
                 previous_exclusions = set(st.session_state.excluded_foods)
                 st.session_state.excluded_foods.add(food_to_exclude)
@@ -2574,8 +2784,8 @@ def tutor_page(embedded: bool = False) -> None:
         with st.chat_message("assistant", avatar="🤖"):
             response_placeholder = st.empty()
             rendered = ""
-            for word in answer.split():
-                rendered += word + " "
+            for token in re.findall(r"\S+\s*", answer):
+                rendered += token
                 response_placeholder.markdown(rendered + "▌")
                 time.sleep(0.035)
             response_placeholder.markdown(rendered)
@@ -3337,6 +3547,10 @@ def main() -> None:
         "¡ATENCIÓN! Si tienes alergias alimentarias, intolerancias o hay algún alimento que no te guste, "
         "escríbelo directamente en la pestaña Tutor IA de tu Perfil para cambiar el ingrediente y recalcular "
         "tus gramos de forma segura."
+    )
+    st.info(
+        '💡 SECCIÓN DE SOPORTE: Recuerda que tienes a tu disposición el módulo de recetas personalizadas '
+        '"¡Cocina Conmigo!" dentro de la pestaña del Tutor IA para adaptar tu menú semanal.'
     )
     page = st.sidebar.radio("Navegación", ["Perfil", "Check-in diario"])
     if page == "Perfil":
