@@ -1693,7 +1693,7 @@ def strength_inputs_for_session(
     """Pide datos solo para la sesión elegida y calcula Epley en cada rerun."""
     strength_data: dict[str, dict[str, float | int]] = {}
     load_percentage = daily_load_percentage(fatigue_multiplier)
-    st.markdown("### Cargas de los ejercicios elegidos")
+    st.markdown("### 💪 Cargas de los ejercicios elegidos")
     st.caption(
         "Introduce una serie previa llevada al fallo técnico. La estimación y la carga de hoy "
         "se actualizan al cambiar cualquier valor."
@@ -1900,7 +1900,7 @@ def profile_details() -> None:
 
 
 def profile_page() -> None:
-    st.header("1. Tu perfil")
+    st.header("📝 1. Tu perfil")
     profile_tab, tutor_tab = st.tabs(["👤 Datos y objetivos", "💬 Tutor IA"])
     with profile_tab:
         profile_details()
@@ -2543,7 +2543,7 @@ def render_daily_plan(plan: dict) -> None:
 
 
 def checkin_page() -> None:
-    st.header("2. Check-in diario")
+    st.header("🏋️‍♂️ 2. Check-in diario")
     st.info(
         "💡 NOTA DE ASISTENCIA: En caso de que prefieras no consumir los datos de tu tarifa móvil o si "
         "la cobertura dentro de la sala de tu gimnasio no es buena, puedes descargar tu Dieta Semanal y "
@@ -2652,14 +2652,14 @@ def checkin_page() -> None:
 def tutor_page(embedded: bool = False) -> None:
     """Chat local para exclusiones alimentarias; no usa llamadas a modelos de IA."""
     if embedded:
-        st.markdown("## ¡Cocina Conmigo!")
+        st.markdown("## 👨‍🍳 ¡Cocina Conmigo!")
         st.markdown(
             "En este apartado puedes poner qué parte de tu dieta no sabes cómo preparar y el Tutor IA "
             "se encargará de darte la receta paso a paso con todo lo que tienes que hacer."
         )
         st.caption("También puedes indicar una alergia, intolerancia o alimento que no te guste para ajustar el menú activo.")
     else:
-        st.header("¡Cocina Conmigo!")
+        st.header("👨‍🍳 ¡Cocina Conmigo!")
         st.markdown(
             "En este apartado puedes poner qué parte de tu dieta no sabes cómo preparar y el Tutor IA "
             "se encargará de darte la receta paso a paso con todo lo que tienes que hacer."
